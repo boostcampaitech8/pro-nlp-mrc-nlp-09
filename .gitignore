@@ -1,1 +1,13 @@
-*.gz
+*.tar.gz
+data
+outputs
+outputs/*
+data/*
+logs/
+
+__pycache__/
+*pyc
+
+.env
+.ipynb_checkpoints
+.DS_Store
