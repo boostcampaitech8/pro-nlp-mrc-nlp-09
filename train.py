@@ -24,7 +24,8 @@ from transformers import (
 from src.utils import (
     check_no_error,
     postprocess_qa_predictions,
-    wait_for_gpu_availability
+    wait_for_gpu_availability,
+    get_config,
 )
 
 
@@ -50,15 +51,21 @@ def main():
     parser = HfArgumentParser(
         (ModelArguments, DataTrainingArguments, TrainingArguments)
     )
-    model_args, data_args, training_args = parser.parse_args_into_dataclasses()
-    print(model_args.model_name_or_path)
+    # model_args, data_args, training_args = parser.parse_args_into_dataclasses()
+    model_args, data_args, training_args = get_config(parser)
 
-    # [참고] argument를 manual하게 수정하고 싶은 경우에 아래와 같은 방식을 사용할 수 있습니다
-    # training_args.per_device_train_batch_size = 4
-    # print(training_args.per_device_train_batch_size)
+    # train.py는 "학습 전용" 스크립트로 사용
+    if not training_args.do_train:
+        raise ValueError(
+            "train.py는 학습 전용 스크립트입니다. "
+            "TrainingArguments.do_train=True로 설정한 YAML을 사용하세요."
+        )
+
+    print(model_args.model_name_or_path)
 
     print(f"model is from {model_args.model_name_or_path}")
     print(f"data is from {data_args.dataset_name}")
+    print(f"output_dir is {training_args.output_dir}")
 
     # gpu 사용 가능한지 체크
     wait_for_gpu_availability()
@@ -68,6 +75,30 @@ def main():
         format="%(asctime)s - %(levelname)s - %(name)s -    %(message)s",
         datefmt="%m/%d/%Y %H:%M:%S",
         handlers=[logging.StreamHandler(sys.stdout)],
+    )
+
+    # 현재 사용 중인 arguments를 한 번에 로그로 남겨두기
+    logger.info("===== ModelArguments =====")
+    logger.info(model_args)
+    logger.info("===== DataTrainingArguments =====")
+    logger.info(data_args)
+    logger.info("===== TrainingArguments (주요 항목) =====")
+    logger.info(
+        "output_dir=%s, num_train_epochs=%s, per_device_train_batch_size=%s, "
+        "per_device_eval_batch_size=%s, learning_rate=%s, "
+        "evaluation_strategy=%s, logging_strategy=%s, save_strategy=%s, "
+        "save_total_limit=%s, load_best_model_at_end=%s, metric_for_best_model=%s",
+        training_args.output_dir,
+        training_args.num_train_epochs,
+        training_args.per_device_train_batch_size,
+        training_args.per_device_eval_batch_size,
+        training_args.learning_rate,
+        getattr(training_args, "evaluation_strategy", None),
+        getattr(training_args, "logging_strategy", None),
+        getattr(training_args, "save_strategy", None),
+        getattr(training_args, "save_total_limit", None),
+        getattr(training_args, "load_best_model_at_end", None),
+        getattr(training_args, "metric_for_best_model", None),
     )
 
     # verbosity 설정 : Transformers logger의 정보로 사용합니다 (on main process only)
@@ -138,10 +169,14 @@ def run_mrc(
     # (question|context) 혹은 (context|question)로 세팅 가능합니다.
     pad_on_right = tokenizer.padding_side == "right"
 
-    # 오류가 있는지 확인합니다.
-    last_checkpoint, max_seq_length = check_no_error(
+    # 모델에 따라 token_type_ids 지원 여부 자동 판별
+    return_token_type_ids = "token_type_ids" in tokenizer.model_input_names
+
+    # 오류가 있는지 확인합니다. (checkpoint는 무시, max_seq_length만 사용)
+    _, max_seq_length = check_no_error(
         data_args, training_args, datasets, tokenizer
     )
+
 
     # Train preprocessing / 전처리를 진행합니다.
     def prepare_train_features(examples):
@@ -274,17 +309,29 @@ def run_mrc(
             ]
         return tokenized_examples
 
-    if training_args.do_eval:
-        eval_dataset = datasets["validation"]
+    # if training_args.do_eval:
+    #     eval_dataset = datasets["validation"]
 
-        # Validation Feature 생성
-        eval_dataset = eval_dataset.map(
-            prepare_validation_features,
-            batched=True,
-            num_proc=data_args.preprocessing_num_workers,
-            remove_columns=column_names,
-            load_from_cache_file=not data_args.overwrite_cache,
-        )
+    #     # Validation Feature 생성
+    #     eval_dataset = eval_dataset.map(
+    #         prepare_validation_features,
+    #         batched=True,
+    #         num_proc=data_args.preprocessing_num_workers,
+    #         remove_columns=column_names,
+    #         load_from_cache_file=not data_args.overwrite_cache,
+    #     )
+
+    eval_dataset = datasets["validation"]
+
+    # Validation Feature 생성
+    eval_dataset = eval_dataset.map(
+        prepare_validation_features,
+        batched=True,
+        num_proc=data_args.preprocessing_num_workers,
+        remove_columns=column_names,
+        load_from_cache_file=not data_args.overwrite_cache,
+    )
+
 
     # Data collator
     # flag가 True이면 이미 max length로 padding된 상태입니다.
@@ -310,6 +357,14 @@ def run_mrc(
         if training_args.do_predict:
             return formatted_predictions
 
+        # elif training_args.do_eval:
+        #     references = [
+        #         {"id": ex["id"], "answers": ex[answer_column_name]}
+        #         for ex in datasets["validation"]
+        #     ]
+        #     return EvalPrediction(
+        #         predictions=formatted_predictions, label_ids=references
+        #     )
         elif training_args.do_eval:
             references = [
                 {"id": ex["id"], "answers": ex[answer_column_name]}
@@ -319,7 +374,10 @@ def run_mrc(
                 predictions=formatted_predictions, label_ids=references
             )
 
+
+
     metric = evaluate.load("squad")
+    print("---- metric loaded: " , metric, "----")
 
     def compute_metrics(p: EvalPrediction):
         return metric.compute(predictions=p.predictions, references=p.label_ids)
@@ -329,8 +387,10 @@ def run_mrc(
         model=model,
         args=training_args,
         train_dataset=train_dataset if training_args.do_train else None,
-        eval_dataset=eval_dataset if training_args.do_eval else None,
-        eval_examples=datasets["validation"] if training_args.do_eval else None,
+        # eval_dataset=eval_dataset if training_args.do_eval else None,
+        eval_dataset=eval_dataset,
+        # eval_examples=datasets["validation"] if training_args.do_eval else None,
+        eval_examples=datasets["validation"],
         tokenizer=tokenizer,
         data_collator=data_collator,
         post_process_function=post_processing_function,
@@ -346,6 +406,14 @@ def run_mrc(
             checkpoint = model_args.model_name_or_path
         else:
             checkpoint = None
+        resume_msg = checkpoint if checkpoint is not None else "from scratch"
+        logger.info(
+            "Starting training using model %s (%s) → output_dir=%s",
+            model_args.model_name_or_path,
+            resume_msg,
+            training_args.output_dir,
+        )
+        
         train_result = trainer.train(resume_from_checkpoint=checkpoint)
         trainer.save_model()  # Saves the tokenizer too for easy upload
 
@@ -371,6 +439,16 @@ def run_mrc(
 
     # Evaluation
     if training_args.do_eval:
+        active_model_path = (
+            training_args.output_dir
+            if training_args.load_best_model_at_end
+            else model_args.model_name_or_path
+        )
+        logger.info(
+            "Evaluating model %s on %s examples (validation set)",
+            active_model_path,
+            len(eval_dataset),
+        )
         logger.info("*** Evaluate ***")
         metrics = trainer.evaluate()
 
