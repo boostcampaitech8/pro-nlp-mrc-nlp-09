@@ -32,13 +32,13 @@ from src.utils import (
 seed = 2024
 deterministic = False
 
-random.seed(seed) # python random seed 고정
-np.random.seed(seed) # numpy random seed 고정
-torch.manual_seed(seed) # torch random seed 고정
+random.seed(seed)  # python random seed 고정
+np.random.seed(seed)  # numpy random seed 고정
+torch.manual_seed(seed)  # torch random seed 고정
 torch.cuda.manual_seed_all(seed)
-if deterministic: # cudnn random seed 고정 - 고정 시 학습 속도가 느려질 수 있습니다. 
-	torch.backends.cudnn.deterministic = True
-	torch.backends.cudnn.benchmark = False
+if deterministic:  # cudnn random seed 고정 - 고정 시 학습 속도가 느려질 수 있습니다.
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
 
 
 logger = logging.getLogger(__name__)
@@ -177,8 +177,8 @@ def run_mrc(
         data_args, training_args, datasets, tokenizer
     )
 
-
     # Train preprocessing / 전처리를 진행합니다.
+
     def prepare_train_features(examples):
         # truncation과 padding(length가 짧을때만)을 통해 toknization을 진행하며, stride를 이용하여 overflow를 유지합니다.
         # 각 example들은 이전의 context와 조금씩 겹치게됩니다.
@@ -332,7 +332,6 @@ def run_mrc(
         load_from_cache_file=not data_args.overwrite_cache,
     )
 
-
     # Data collator
     # flag가 True이면 이미 max length로 padding된 상태입니다.
     # 그렇지 않다면 data collator에서 padding을 진행해야합니다.
@@ -374,10 +373,8 @@ def run_mrc(
                 predictions=formatted_predictions, label_ids=references
             )
 
-
-
     metric = evaluate.load("squad")
-    print("---- metric loaded: " , metric, "----")
+    print("---- metric loaded: ", metric, "----")
 
     def compute_metrics(p: EvalPrediction):
         return metric.compute(predictions=p.predictions, references=p.label_ids)
@@ -396,8 +393,7 @@ def run_mrc(
         post_process_function=post_processing_function,
         compute_metrics=compute_metrics,
     )
-    
-    
+
     # Training
     if training_args.do_train:
         if last_checkpoint is not None:
@@ -413,7 +409,7 @@ def run_mrc(
             resume_msg,
             training_args.output_dir,
         )
-        
+
         train_result = trainer.train(resume_from_checkpoint=checkpoint)
         trainer.save_model()  # Saves the tokenizer too for easy upload
 
