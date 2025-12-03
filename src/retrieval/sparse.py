@@ -6,7 +6,7 @@ import random
 from contextlib import contextmanager
 from typing import List, NoReturn, Optional, Tuple, Union
 
-import faiss
+# import faiss
 import numpy as np
 import pandas as pd
 from datasets import Dataset, concatenate_datasets, load_from_disk
