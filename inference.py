@@ -10,7 +10,7 @@ from typing import Callable, Dict, List, NoReturn, Tuple
 
 import evaluate
 import numpy as np
-from arguments import DataTrainingArguments, ModelArguments
+from src.arguments import DataTrainingArguments, ModelArguments
 from datasets import (
     Dataset,
     DatasetDict,
@@ -19,8 +19,8 @@ from datasets import (
     Value,
     load_from_disk,
 )
-from retrieval import SparseRetrieval
-from trainer_qa import QuestionAnsweringTrainer
+from src.retrieval import SparseRetrieval
+from src.trainer_qa import QuestionAnsweringTrainer
 from transformers import (
     AutoConfig,
     AutoModelForQuestionAnswering,
@@ -31,7 +31,12 @@ from transformers import (
     TrainingArguments,
     set_seed,
 )
-from utils_qa import check_no_error, postprocess_qa_predictions
+
+from src.utils import (
+    check_no_error,
+    postprocess_qa_predictions,
+    wait_for_gpu_availability
+)
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +54,9 @@ def main():
 
     print(f"model is from {model_args.model_name_or_path}")
     print(f"data is from {data_args.dataset_name}")
+
+    # gpu 사용 가능한지 체크
+    wait_for_gpu_availability()
 
     # logging 설정
     logging.basicConfig(
@@ -108,7 +116,7 @@ def run_sparse_retrieval(
     datasets: DatasetDict,
     training_args: TrainingArguments,
     data_args: DataTrainingArguments,
-    data_path: str = "../data",
+    data_path: str = "./data",
     context_path: str = "wikipedia_documents.json",
 ) -> DatasetDict:
 

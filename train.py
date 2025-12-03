@@ -26,19 +26,9 @@ from transformers import (
 from src.utils import (
     check_no_error,
     postprocess_qa_predictions,
-    wait_for_gpu_availability,
-    get_config,
-    to_serializable,
-    print_section,
-    get_logger,
+    wait_for_gpu_availability
 )
-from src.utils.metrics_tracker import MetricsTracker
-from src.utils.evaluator import (
-    FinalEvaluator,
-    save_predictions,
-    save_detailed_results,
-)
-from src.utils.analysis import save_prediction_analysis
+
 
 seed = 2024
 deterministic = False
@@ -64,49 +54,28 @@ def main():
     parser = HfArgumentParser(
         (ModelArguments, DataTrainingArguments, TrainingArguments)
     )
+    model_args, data_args, training_args = parser.parse_args_into_dataclasses()
+    print(model_args.model_name_or_path)
 
-    model_args, data_args, training_args = get_config(parser)
+    # [참고] argument를 manual하게 수정하고 싶은 경우에 아래와 같은 방식을 사용할 수 있습니다
+    # training_args.per_device_train_batch_size = 4
+    # print(training_args.per_device_train_batch_size)
 
-    #
-    training_args.do_train = True
-    training_args.do_eval = True
+    print(f"model is from {model_args.model_name_or_path}")
+    print(f"data is from {data_args.dataset_name}")
 
-    # train.py는 "학습 전용" 스크립트로 사용
-    if not training_args.do_train:
-        raise ValueError(
-            "train.py는 학습 전용 스크립트입니다. "
-            "TrainingArguments.do_train=True로 설정한 YAML을 사용하세요."
-        )
+    # gpu 사용 가능한지 체크
+    wait_for_gpu_availability()
 
-    logger.info("model is from: %s", model_args.model_name_or_path)
-    logger.info("data is from: %s", data_args.train_dataset_name)
-    logger.info("output_dir is: %s", training_args.output_dir)
+    # logging 설정
+    logging.basicConfig(
+        format="%(asctime)s - %(levelname)s - %(name)s -    %(message)s",
+        datefmt="%m/%d/%Y %H:%M:%S",
+        handlers=[logging.StreamHandler(sys.stdout)],
+    )
 
-    # 현재 사용 중인 arguments를 한 번에 로그로 남겨두기
-    print_section("Model Arguments", model_args)
-    print_section("Data Training Arguments", data_args)
-    print("Trainging Arguments:")
-    print(f"output_dir: {training_args.output_dir})")
-    print(f"num_train_epochs: {training_args.num_train_epochs}")
-    print(f"per_device_train_batch_size: {training_args.per_device_train_batch_size}")
-    print(f"per_device_eval_batch_size: {training_args.per_device_eval_batch_size}")
-    print(f"learning_rate: {training_args.learning_rate}")
-    print(f"warmup_ratio: {training_args.warmup_ratio}")
-    print(f"weight_decay: {training_args.weight_decay}")
-    print(f"logging_steps: {training_args.logging_steps}")
-    print(f"logging_first_step: {training_args.logging_first_step}")
-    # attr 환경 이슈로 아예 주석 처리함
-    # print(f"evaluation_strategy: {training_args.eval_strategy}")
-    # print(f"eval_strategy: {training_args.eval_strategy}")
-    print(f"save_strategy: {training_args.save_strategy}")
-    print(f"save_total_limit: {training_args.save_total_limit}")
-    print(f"load_best_model_at_end: {training_args.load_best_model_at_end}")
-    print(f"metric_for_best_model: {training_args.metric_for_best_model}")
-    print(f"greater_is_better: {training_args.greater_is_better}")
-    print(f"fp16: {training_args.fp16}")
-    print(f"dataloader_num_workers: {training_args.dataloader_num_workers}")
-    print(f"gradient_accumulation_steps: {training_args.gradient_accumulation_steps}")
-    print(f"report_to: {training_args.report_to}")
+    # verbosity 설정 : Transformers logger의 정보로 사용합니다 (on main process only)
+    logger.info("Training/evaluation parameters %s", training_args)
 
     # 모델을 초기화하기 전에 난수를 고정합니다.
     set_seed(training_args.seed)
