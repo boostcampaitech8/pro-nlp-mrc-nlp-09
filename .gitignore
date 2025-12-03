@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 *.tar.gz
 data
 outputs
@@ -12,3 +13,6 @@ __pycache__/
 .ipynb_checkpoints
 .DS_Store
 configs/
+=======
+*.gz
+>>>>>>> ca05991... refactor: 프로젝트 디렉토리 구조 초기화
