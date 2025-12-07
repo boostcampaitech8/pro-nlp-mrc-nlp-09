@@ -47,10 +47,11 @@ class MetricsTracker(TrainerCallback):
     def on_train_end(self, args, state, control, **kwargs):
         """학습 종료 시 메트릭 저장 및 시각화"""
         self.save_metrics()
+        self.save_epoch_summary()  # 에포크별 요약 저장
         self.plot_metrics()
 
     def save_metrics(self):
-        """메트릭을 JSON 파일로 저장"""
+        """메트릭을 JSON 파일로 저장 (전체 로그)"""
         metrics_path = os.path.join(self.output_dir, "training_metrics.json")
         with open(metrics_path, "w", encoding="utf-8") as f:
             json.dump(
@@ -60,6 +61,79 @@ class MetricsTracker(TrainerCallback):
                 ensure_ascii=False,
             )
         print(f"✅ Training metrics saved to {metrics_path}")
+
+    def save_epoch_summary(self):
+        """에포크별 EM/F1 스코어를 사람이 보기 쉬운 형태로 저장"""
+        if not self.eval_metrics:
+            return
+
+        # 에포크별 메트릭 정리
+        epoch_summary = []
+        for metric in self.eval_metrics:
+            epoch_summary.append(
+                {
+                    "epoch": round(metric["epoch"], 2),
+                    "exact_match": round(metric["exact_match"], 2),
+                    "f1": round(metric["f1"], 2),
+                    "eval_loss": round(metric.get("eval_loss", 0), 4)
+                    if metric.get("eval_loss")
+                    else None,
+                    "step": metric["step"],
+                }
+            )
+
+        # Best 메트릭 찾기
+        best_em = max(epoch_summary, key=lambda x: x["exact_match"])
+        best_f1 = max(epoch_summary, key=lambda x: x["f1"])
+
+        summary = {
+            "epoch_metrics": epoch_summary,
+            "best_performance": {
+                "best_exact_match": {
+                    "score": best_em["exact_match"],
+                    "epoch": best_em["epoch"],
+                    "step": best_em["step"],
+                    "f1_at_best_em": best_em["f1"],
+                },
+                "best_f1": {
+                    "score": best_f1["f1"],
+                    "epoch": best_f1["epoch"],
+                    "step": best_f1["step"],
+                    "em_at_best_f1": best_f1["exact_match"],
+                },
+            },
+        }
+
+        # JSON 저장
+        summary_path = os.path.join(self.output_dir, "epoch_summary.json")
+        with open(summary_path, "w", encoding="utf-8") as f:
+            json.dump(summary, f, indent=2, ensure_ascii=False)
+
+        # Markdown 테이블 저장 (사람이 읽기 편한 형태)
+        md_path = os.path.join(self.output_dir, "epoch_summary.md")
+        with open(md_path, "w", encoding="utf-8") as f:
+            f.write("# Training Epoch Summary\n\n")
+            f.write("## Epoch-by-Epoch Performance\n\n")
+            f.write("| Epoch | EM Score | F1 Score | Eval Loss | Step |\n")
+            f.write("|-------|----------|----------|-----------|------|\n")
+            for m in epoch_summary:
+                eval_loss_str = f"{m['eval_loss']:.4f}" if m["eval_loss"] else "N/A"
+                f.write(
+                    f"| {m['epoch']:.2f} | {m['exact_match']:.2f} | {m['f1']:.2f} | {eval_loss_str} | {m['step']} |\n"
+                )
+
+            f.write(f"\n## Best Performance\n\n")
+            f.write(f"**Best Exact Match:** {best_em['exact_match']:.2f}%\n")
+            f.write(f"- Epoch: {best_em['epoch']:.2f}\n")
+            f.write(f"- Step: {best_em['step']}\n")
+            f.write(f"- F1 at this point: {best_em['f1']:.2f}%\n\n")
+
+            f.write(f"**Best F1 Score:** {best_f1['f1']:.2f}%\n")
+            f.write(f"- Epoch: {best_f1['epoch']:.2f}\n")
+            f.write(f"- Step: {best_f1['step']}\n")
+            f.write(f"- EM at this point: {best_f1['exact_match']:.2f}%\n")
+
+        print(f"✅ Epoch summary saved to {summary_path} and {md_path}")
 
     def plot_metrics(self):
         """메트릭을 그래프로 시각화"""
@@ -122,7 +196,7 @@ class MetricsTracker(TrainerCallback):
         print(f"✅ Training metrics plot saved to {plot_path}")
 
     def print_summary(self):
-        """학습 요약 출력"""
+        """학습 요약 출력 - Train/Eval 메트릭 모두 표시"""
         if not self.eval_metrics:
             return
 
@@ -133,23 +207,44 @@ class MetricsTracker(TrainerCallback):
         # Best metrics 찾기
         best_em_metric = max(self.eval_metrics, key=lambda x: x["exact_match"])
         best_f1_metric = max(self.eval_metrics, key=lambda x: x["f1"])
+        final_eval_metric = self.eval_metrics[-1]
 
+        # Train loss 정보
+        if self.train_losses:
+            final_train_loss = self.train_losses[-1]
+            best_train_loss = min(self.train_losses, key=lambda x: x["loss"])
+            print(f"\n📉 Training Loss:")
+            print(
+                f"   - Final: {final_train_loss['loss']:.4f} (Epoch {final_train_loss['epoch']:.2f}, Step {final_train_loss['step']})"
+            )
+            print(
+                f"   - Best: {best_train_loss['loss']:.4f} (Epoch {best_train_loss['epoch']:.2f}, Step {best_train_loss['step']})"
+            )
+
+        # Eval 메트릭
+        print(f"\n📊 Validation Metrics:")
         print(f"\n🏆 Best Exact Match: {best_em_metric['exact_match']:.2f}")
         print(f"   - Epoch: {best_em_metric['epoch']:.2f}")
         print(f"   - Step: {best_em_metric['step']}")
         print(f"   - F1: {best_em_metric['f1']:.2f}")
+        if best_em_metric.get("eval_loss"):
+            print(f"   - Eval Loss: {best_em_metric['eval_loss']:.4f}")
 
         print(f"\n🏆 Best F1 Score: {best_f1_metric['f1']:.2f}")
         print(f"   - Epoch: {best_f1_metric['epoch']:.2f}")
         print(f"   - Step: {best_f1_metric['step']}")
         print(f"   - EM: {best_f1_metric['exact_match']:.2f}")
+        if best_f1_metric.get("eval_loss"):
+            print(f"   - Eval Loss: {best_f1_metric['eval_loss']:.4f}")
 
-        # Final metrics
-        final_metric = self.eval_metrics[-1]
-        print(f"\n📈 Final Metrics (Epoch {final_metric['epoch']:.2f}):")
-        print(f"   - EM: {final_metric['exact_match']:.2f}")
-        print(f"   - F1: {final_metric['f1']:.2f}")
-        if final_metric.get("eval_loss"):
-            print(f"   - Eval Loss: {final_metric['eval_loss']:.4f}")
+        print(
+            f"\n📈 Final Validation Metrics (Epoch {final_eval_metric['epoch']:.2f}):"
+        )
+        print(f"   - EM: {final_eval_metric['exact_match']:.2f}")
+        print(f"   - F1: {final_eval_metric['f1']:.2f}")
+        if final_eval_metric.get("eval_loss"):
+            print(f"   - Eval Loss: {final_eval_metric['eval_loss']:.4f}")
+
+        print(f"\n💡 Test 메트릭은 inference 후에 확인할 수 있습니다.")
 
         print("=" * 80 + "\n")
