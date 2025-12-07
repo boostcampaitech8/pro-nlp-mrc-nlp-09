@@ -28,23 +28,23 @@ def get_logger(name: str, level: int = logging.INFO) -> logging.Logger:
     # 3. [포맷터 설정] colorlog 설치 여부에 따라 분기 처리
     try:
         import colorlog
+
         # 레벨(INFO, ERROR 등) 부분에만 색상을 적용하고, 나머지는 기본색 유지
         formatter = colorlog.ColoredFormatter(
             fmt="%(asctime)s | %(log_color)s%(levelname)-8s%(reset)s | %(message)s",
             datefmt="%H:%M:%S",
             log_colors={
-                'DEBUG':    'cyan',
-                'INFO':     'green',
-                'WARNING':  'yellow',
-                'ERROR':    'red',
-                'CRITICAL': 'red,bg_white',
-            }
+                "DEBUG": "cyan",
+                "INFO": "green",
+                "WARNING": "yellow",
+                "ERROR": "red",
+                "CRITICAL": "red,bg_white",
+            },
         )
     except ImportError:
         # 라이브러리가 없을 경우 기본 포맷 사용
         formatter = logging.Formatter(
-            fmt="%(asctime)s | %(levelname)-8s | %(message)s",
-            datefmt="%H:%M:%S"
+            fmt="%(asctime)s | %(levelname)-8s | %(message)s", datefmt="%H:%M:%S"
         )
 
     # 4. [핸들러 설정] 콘솔(Standard Output)에 출력
