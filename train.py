@@ -37,6 +37,7 @@ from src.utils.evaluator import (
     save_predictions,
     save_detailed_results,
 )
+from src.utils.analysis import save_prediction_analysis
 
 seed = 2024
 deterministic = False
@@ -403,8 +404,25 @@ def run_mrc(
     logger.info("Saving model to %s", training_args.output_dir)
     logger.info(f"최종 훈련 결과: {train_result.metrics}")
 
+    # 모델 저장 (safetensors는 자동으로 처리됨)
     trainer.save_model()  # tokenizer까지 함께 저장
     trainer.save_state()
+
+    # ✅ Best checkpoint 경로 명시적으로 저장 (inference에서 사용)
+    if trainer.state.best_model_checkpoint:
+        best_checkpoint_path = os.path.join(
+            training_args.output_dir, "best_checkpoint_path.txt"
+        )
+        with open(best_checkpoint_path, "w") as f:
+            f.write(trainer.state.best_model_checkpoint)
+        logger.info(f"✅ Best checkpoint saved: {trainer.state.best_model_checkpoint}")
+        logger.info(
+            f"   Best metric ({training_args.metric_for_best_model}): {trainer.state.best_metric}"
+        )
+    else:
+        logger.warning(
+            "⚠️  No best checkpoint found (load_best_model_at_end might be False)"
+        )
 
     metrics = train_result.metrics
     metrics["train_samples"] = len(train_dataset)
@@ -424,86 +442,153 @@ def run_mrc(
         os.path.join(training_args.output_dir, "trainer_state.json")
     )
 
-    # Evaluation
-    logger.info(
-        "Running final evaluation on validation set (%d examples)",
-        len(eval_dataset),
-    )
-    logger.info(f"Best metric: {trainer.state.best_metric}")
-    logger.info(f"Best model checkpoint: {trainer.state.best_model_checkpoint}")
+    # Evaluation - try-except로 감싸서 평가 실패해도 학습 결과는 보존
+    try:
+        logger.info(
+            "Running final evaluation on validation set (%d examples)",
+            len(eval_dataset),
+        )
+        logger.info(f"Best metric: {trainer.state.best_metric}")
+        logger.info(f"Best model checkpoint: {trainer.state.best_model_checkpoint}")
 
-    metrics = trainer.evaluate()
-    metrics["eval_samples"] = len(eval_dataset)
-    trainer.log_metrics("eval", metrics)
-    trainer.save_metrics("eval", metrics)
+        metrics = trainer.evaluate()
+        metrics["eval_samples"] = len(eval_dataset)
+        trainer.log_metrics("eval", metrics)
+        trainer.save_metrics("eval", metrics)
+    except Exception as e:
+        logger.warning(f"⚠️  Final evaluation failed: {e}")
+        logger.warning("   Best checkpoint is already saved in output directory")
 
     # 학습 요약 출력
     metrics_tracker.print_summary()
 
     # 최종 성능 평가 (train + validation)
-    logger.info("=" * 80)
-    logger.info("Running final performance evaluation on all splits...")
-    logger.info("=" * 80)
+    # 주의: 이 부분이 실패해도 위에서 이미 best checkpoint는 저장됨
+    try:
+        logger.info("=" * 80)
+        logger.info("Running final performance evaluation on all splits...")
+        logger.info("=" * 80)
 
-    final_evaluator = FinalEvaluator(output_dir=training_args.output_dir)
+        final_evaluator = FinalEvaluator(output_dir=training_args.output_dir)
 
-    # 1. Train set 평가
-    logger.info("Evaluating on TRAIN set...")
-    train_predictions = trainer.predict(
-        test_dataset=train_dataset, test_examples=datasets["train"]
-    )
-    train_pred_dict = train_predictions.predictions
-    train_ref_dict = {ex["id"]: ex[answer_column_name] for ex in datasets["train"]}
-
-    final_evaluator.evaluate_split(
-        predictions=train_pred_dict,
-        references=train_ref_dict,
-        split_name="train",
-        with_retrieval=False,
-    )
-    save_predictions(train_pred_dict, training_args.output_dir, "train")
-    save_detailed_results(
-        train_pred_dict, datasets["train"], training_args.output_dir, "train"
-    )
-
-    # 2. Validation set 평가 (이미 평가됨, 결과 저장만)
-    logger.info("Evaluating on VALIDATION set...")
-    val_predictions = trainer.predict(
-        test_dataset=eval_dataset, test_examples=datasets["validation"]
-    )
-    val_pred_dict = val_predictions.predictions
-    val_ref_dict = {ex["id"]: ex[answer_column_name] for ex in datasets["validation"]}
-
-    final_evaluator.evaluate_split(
-        predictions=val_pred_dict,
-        references=val_ref_dict,
-        split_name="validation",
-        with_retrieval=False,
-    )
-    save_predictions(val_pred_dict, training_args.output_dir, "val")
-    save_detailed_results(
-        val_pred_dict, datasets["validation"], training_args.output_dir, "val"
-    )
-
-    # 3. 최종 summary 저장 및 출력
-    final_evaluator.save_summary()
-    final_evaluator.print_summary()
-
-    # Best checkpoint 경로를 파일로 저장 (inference에서 자동 로드용)
-    if trainer.state.best_model_checkpoint:
-        best_checkpoint_file = os.path.join(
-            training_args.output_dir, "best_checkpoint_path.txt"
+        # 1. Train set 평가 (validation 형식으로 변환 필요)
+        logger.info("Evaluating on TRAIN set...")
+        train_dataset_for_eval = datasets["train"].map(
+            prepare_validation_features,
+            batched=True,
+            num_proc=data_args.preprocessing_num_workers,
+            remove_columns=column_names,
+            load_from_cache_file=False,  # 캐시 충돌 방지: 여러 모델 연달아 실행 시 필수
+            desc="Preparing train features for evaluation",
         )
-        with open(best_checkpoint_file, "w") as f:
-            f.write(trainer.state.best_model_checkpoint)
-        logger.info(f"✅ Saved best checkpoint path to: {best_checkpoint_file}")
+        train_predictions = trainer.predict(
+            test_dataset=train_dataset_for_eval, test_examples=datasets["train"]
+        )
+        # predictions는 리스트 형태 [{"id": ..., "prediction_text": ...}, ...]
+        train_pred_dict = {
+            pred["id"]: pred["prediction_text"]
+            for pred in train_predictions.predictions
+        }
+        train_ref_dict = {ex["id"]: ex[answer_column_name] for ex in datasets["train"]}
+
+        # train에서는 retrieval 사용 안함
+        final_evaluator.evaluate_split(
+            predictions=train_pred_dict,
+            references=train_ref_dict,
+            split_name="train",
+            with_retrieval=False,
+        )
+        save_predictions(train_pred_dict, training_args.output_dir, "train")
+        # 사후 분석을 위한 confidence 정보 저장 (detailed_results보다 먼저 실행)
+        save_prediction_analysis(
+            train_predictions,
+            datasets["train"],
+            training_args.output_dir,
+            "train",
+            answer_column_name,
+        )
+        save_detailed_results(
+            train_pred_dict, datasets["train"], training_args.output_dir, "train"
+        )
+
+        # 2. Validation set 평가 (이미 평가됨, 결과 저장만)
+        logger.info("Evaluating on VALIDATION set (gold context)...")
+        val_predictions = trainer.predict(
+            test_dataset=eval_dataset, test_examples=datasets["validation"]
+        )
+        # predictions는 리스트 형태 [{"id": ..., "prediction_text": ...}, ...]
+        val_pred_dict = {
+            pred["id"]: pred["prediction_text"] for pred in val_predictions.predictions
+        }
+        val_ref_dict = {
+            ex["id"]: ex[answer_column_name] for ex in datasets["validation"]
+        }
+
+        final_evaluator.evaluate_split(
+            predictions=val_pred_dict,
+            references=val_ref_dict,
+            split_name="validation",
+            with_retrieval=False,
+        )
+        save_predictions(val_pred_dict, training_args.output_dir, "val")
+        # 사후 분석을 위한 confidence 정보 저장 (detailed_results보다 먼저 실행)
+        save_prediction_analysis(
+            val_predictions,
+            datasets["validation"],
+            training_args.output_dir,
+            "val",
+            answer_column_name,
+        )
+        save_detailed_results(
+            val_pred_dict, datasets["validation"], training_args.output_dir, "val"
+        )
+
+        # eval_pred_gold.csv 저장 (gold context 사용한 validation 예측)
+        import csv
+
+        eval_pred_gold_path = os.path.join(
+            training_args.output_dir, "eval_pred_gold.csv"
+        )
+        with open(eval_pred_gold_path, "w", encoding="utf-8") as f:
+            writer = csv.writer(f, delimiter="\t")
+            for key, value in val_pred_dict.items():
+                writer.writerow([key, value])
+        logger.info(
+            f"✅ Validation predictions (gold context) saved to {eval_pred_gold_path}"
+        )
+
+        # 정답 레이블 저장 (스코어링용)
+        import json
+
+        eval_labels_path = os.path.join(training_args.output_dir, "eval_labels.json")
+        with open(eval_labels_path, "w", encoding="utf-8") as f:
+            json.dump(val_ref_dict, f, indent=2, ensure_ascii=False)
+        logger.info(f"✅ Validation labels saved to {eval_labels_path}")
+
+        # 3. 최종 summary 저장 및 출력
+        final_evaluator.save_summary()
+        final_evaluator.print_summary()
+        logger.info("✅ Final performance evaluation completed successfully")
+
+    except Exception as e:
+        logger.warning(f"⚠️  Final evaluation failed (but model is already saved): {e}")
+        logger.warning(
+            "   Best checkpoint and metrics are preserved in output directory"
+        )
+
+    # Best checkpoint 경로를 파일로 저장 (inference에서 자동 로드용) - 이미 위에서 저장했으므로 제거 가능
+    # (중복 방지: 이미 trainer.save_state() 직후에 저장됨)
 
     # 학습에 사용된 yaml config 파일을 output_dir에 복사
     if len(sys.argv) == 2 and sys.argv[1].endswith(".yaml"):
-        os.makedirs(training_args.output_dir, exist_ok=True)
-        shutil.copy2(
-            sys.argv[1], os.path.join(training_args.output_dir, "config_used.yaml")
-        )
+        config_path = sys.argv[1]
+        if os.path.exists(config_path):
+            os.makedirs(training_args.output_dir, exist_ok=True)
+            shutil.copy2(
+                config_path, os.path.join(training_args.output_dir, "config_used.yaml")
+            )
+        else:
+            logger.warning(f"⚠️  Config file not found: {config_path}")
 
 
 if __name__ == "__main__":
