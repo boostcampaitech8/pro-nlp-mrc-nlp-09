@@ -317,8 +317,16 @@ def run_mrc(
 
     metric = evaluate.load("squad")
 
-    def compute_metrics(p: EvalPrediction) -> Dict:
-        return metric.compute(predictions=p.predictions, references=p.label_ids)
+    def compute_metrics(p) -> Dict:
+        # post_processing_function이 반환하는 타입에 따라 처리
+        if isinstance(p, EvalPrediction):
+            # do_eval 모드: EvalPrediction 객체
+            predictions = p.predictions
+            references = p.label_ids
+            return metric.compute(predictions=predictions, references=references)
+        else:
+            # do_predict 모드: 이미 formatted list (metric 계산 불필요)
+            return {}
 
     print("init trainer...")
     # Trainer 초기화
