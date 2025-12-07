@@ -146,6 +146,8 @@ def save_detailed_results(
     """
     사후 분석을 위한 상세 결과 저장
 
+    confidence 정보가 있으면 통합하여 저장
+
     Args:
         predictions: {id: prediction_text}
         examples: 원본 examples (question, context, answers 포함)
@@ -154,6 +156,26 @@ def save_detailed_results(
     """
     os.makedirs(output_path, exist_ok=True)
     detailed_file = os.path.join(output_path, f"{split_name}_detailed_results.json")
+
+    # Confidence 정보 로드 (있으면)
+    confidence_dict = {}
+    confidence_file = os.path.join(output_path, f"{split_name}_confidence.csv")
+    if os.path.exists(confidence_file):
+        try:
+            import pandas as pd
+
+            confidence_df = pd.read_csv(confidence_file)
+            confidence_dict = {
+                row["id"]: {
+                    "max_prob": row.get("max_prob", -1),
+                    "avg_prob": row.get("avg_prob", -1),
+                    "is_correct": row.get("is_correct", -1),
+                }
+                for _, row in confidence_df.iterrows()
+            }
+            print(f"✅ Loaded confidence data from {confidence_file}")
+        except Exception as e:
+            print(f"⚠️  Failed to load confidence data: {e}")
 
     detailed_results = []
     metric = evaluate.load("squad")
@@ -174,18 +196,24 @@ def save_detailed_results(
             em_score = None
             f1_score = None
 
-        detailed_results.append(
-            {
-                "id": example_id,
-                "question": example.get("question", ""),
-                "context": example.get("context", "")[:500]
-                + "...",  # context는 앞 500자만
-                "prediction": prediction,
-                "ground_truth": example.get("answers", {}).get("text", []),
-                "em_score": em_score,
-                "f1_score": f1_score,
-            }
-        )
+        # Confidence 정보 추가
+        result_dict = {
+            "id": example_id,
+            "question": example.get("question", ""),
+            "context": example.get("context", "")[:500] + "...",  # context는 앞 500자만
+            "prediction": prediction,
+            "ground_truth": example.get("answers", {}).get("text", []),
+            "em_score": em_score,
+            "f1_score": f1_score,
+        }
+
+        # Confidence 정보가 있으면 추가
+        if example_id in confidence_dict:
+            conf_info = confidence_dict[example_id]
+            result_dict["confidence_max"] = conf_info["max_prob"]
+            result_dict["confidence_avg"] = conf_info["avg_prob"]
+
+        detailed_results.append(result_dict)
 
     with open(detailed_file, "w", encoding="utf-8") as f:
         json.dump(detailed_results, f, indent=2, ensure_ascii=False)
