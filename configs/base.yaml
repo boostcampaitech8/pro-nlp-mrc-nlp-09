@@ -1,0 +1,68 @@
+# model, data는 arguments.py에 지정된 dataclass 형식에 맞게 작성하면 됩니다. (값 미기재 시 default 값 사용)
+# training은 TrainingArguments 형식에 맞게 작성하면 됩니다. (HF transformers 제공)
+# base.yaml 기준으로 configs/exp/exp_name.yaml 파일을 만들고 실험별 설정을 관리하시면 됩니다.
+
+# 모드는 스크립트에서 강제 세팅 (train.py: do_train=True, do_eval=True)
+# do_train / do_eval / do_predict 여기서 설정 불필요
+
+##################################
+# --- model (ModelArguments) ---
+##################################
+model_name_or_path: klue/bert-base
+# config_name: null              # 모델과 동일하면 생략 가능
+# tokenizer_name: null           # 모델과 동일하면 생략 가능
+
+
+##################################
+# --- data (DataTrainingArguments) ---
+##################################
+train_datasetdataset_name: ./data/train_dataset     # 항상 train에서 사용
+val_dataset_name: ./data/train_dataset/validation   # 해당 경로 설정시 inference에서 val 사용
+test_dataset_name: ./data/test_dataset              # inference에서 사용
+
+overwrite_cache: false
+preprocessing_num_workers: 4
+max_seq_length: 384
+pad_to_max_length: false
+doc_stride: 128
+max_answer_length: 30
+
+# retrieval 관련
+eval_retrieval: true
+num_clusters:
+top_k_retrieval: 10
+use_faiss: false
+
+##################################
+# --- training (TrainingArguments) ---
+##################################
+output_dir: ./outputs/{username}/{exp_name}  # {username} 부분을 본인 이름으로 변경 권장
+num_train_epochs: 5
+per_device_train_batch_size: 16          # 3952 / 16 = 247 steps/epoch
+per_device_eval_batch_size: 32
+learning_rate: 3.0e-5
+warmup_ratio: 0.1                         # ~74 steps warmup
+weight_decay: 0.01
+
+# logging & save 전략 (247 steps/epoch 기준)
+logging_steps: 50
+logging_first_step: true
+eval_strategy: epoch
+save_strategy: epoch
+save_total_limit: 2
+load_best_model_at_end: true
+metric_for_best_model: "exact_match"
+greater_is_better: true
+
+# 기타 설정
+fp16: # 큰 모델 양자화
+dataloader_num_workers: 2
+gradient_accumulation_steps: 1
+remove_unused_columns: false
+resume_from_checkpoint:
+
+# wandb 관련 설정
+report_to: none
+# report_to: wandb              # wandb 사용 시 주석 해제
+# run_name: mrc-bert-base       # wandb run name
+

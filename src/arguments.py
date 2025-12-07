@@ -35,10 +35,21 @@ class DataTrainingArguments:
     Arguments pertaining to what data we are going to input our model for training and eval.
     """
 
-    dataset_name: Optional[str] = field(
+    train_dataset_name: Optional[str] = field(
         default="./data/train_dataset",
         metadata={"help": "The name of the dataset to use."},
     )
+
+    val_dataset_name: Optional[str] = field(
+        default=None,
+        metadata={"help": "The name of the validation dataset to use."},
+    )
+
+    test_dataset_name: Optional[str] = field(
+        default="./data/test_dataset",
+        metadata={"help": "The name of the test dataset to use."},
+    )
+
     overwrite_cache: bool = field(
         default=False,
         metadata={"help": "Overwrite the cached training and evaluation sets"},

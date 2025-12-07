@@ -1,4 +1,5 @@
 import logging
+import shutil
 import os
 import sys
 import random
@@ -24,23 +25,23 @@ from transformers import (
 from src.utils import (
     check_no_error,
     postprocess_qa_predictions,
-    wait_for_gpu_availability
+    wait_for_gpu_availability,
+    get_config, to_serializable, print_section,
+    get_logger
 )
-
 
 seed = 2024
 deterministic = False
 
-random.seed(seed) # python random seed 고정
-np.random.seed(seed) # numpy random seed 고정
-torch.manual_seed(seed) # torch random seed 고정
+random.seed(seed)  # python random seed 고정
+np.random.seed(seed)  # numpy random seed 고정
+torch.manual_seed(seed)  # torch random seed 고정
 torch.cuda.manual_seed_all(seed)
-if deterministic: # cudnn random seed 고정 - 고정 시 학습 속도가 느려질 수 있습니다. 
-	torch.backends.cudnn.deterministic = True
-	torch.backends.cudnn.benchmark = False
+if deterministic:  # cudnn random seed 고정 - 고정 시 학습 속도가 느려질 수 있습니다.
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
 
-
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 def main():
@@ -50,34 +51,56 @@ def main():
     parser = HfArgumentParser(
         (ModelArguments, DataTrainingArguments, CustomTrainingArguments)
     )
-    model_args, data_args, training_args = parser.parse_args_into_dataclasses()
-    print(model_args.model_name_or_path)
 
-    # [참고] argument를 manual하게 수정하고 싶은 경우에 아래와 같은 방식을 사용할 수 있습니다
-    # training_args.per_device_train_batch_size = 4
-    # print(training_args.per_device_train_batch_size)
+    model_args, data_args, training_args = get_config(parser)
 
-    print(f"model is from {model_args.model_name_or_path}")
-    print(f"data is from {data_args.dataset_name}")
+    #
+    training_args.do_train = True
+    training_args.do_eval = True
+
+    # train.py는 "학습 전용" 스크립트로 사용
+    if not training_args.do_train:
+        raise ValueError(
+            "train.py는 학습 전용 스크립트입니다. "
+            "TrainingArguments.do_train=True로 설정한 YAML을 사용하세요."
+        )
+
+    logger.info("model is from: %s", model_args.model_name_or_path)
+    logger.info("data is from: %s", data_args.train_dataset_name)
+    logger.info("output_dir is: %s", training_args.output_dir)
 
     # gpu 사용 가능한지 체크
     wait_for_gpu_availability()
 
-    # logging 설정
-    logging.basicConfig(
-        format="%(asctime)s - %(levelname)s - %(name)s -    %(message)s",
-        datefmt="%m/%d/%Y %H:%M:%S",
-        handlers=[logging.StreamHandler(sys.stdout)],
-    )
-
-    # verbosity 설정 : Transformers logger의 정보로 사용합니다 (on main process only)
-    logger.info("Training/evaluation parameters %s", training_args)
+    # 현재 사용 중인 arguments를 한 번에 로그로 남겨두기
+    print_section("Model Arguments", model_args)
+    print_section("Data Training Arguments", data_args)
+    print("Trainging Arguments:")
+    print(f"output_dir: {training_args.output_dir})")
+    print(f"num_train_epochs: {training_args.num_train_epochs}")
+    print(f"per_device_train_batch_size: {training_args.per_device_train_batch_size}")
+    print(f"per_device_eval_batch_size: {training_args.per_device_eval_batch_size}")
+    print(f"learning_rate: {training_args.learning_rate}")
+    print(f"warmup_ratio: {training_args.warmup_ratio}")
+    print(f"weight_decay: {training_args.weight_decay}")
+    print(f"logging_steps: {training_args.logging_steps}")
+    print(f"logging_first_step: {training_args.logging_first_step}")
+    print(f"evaluation_strategy: {training_args.evaluation_strategy}")
+    print(f"save_strategy: {training_args.save_strategy}")
+    print(f"save_total_limit: {training_args.save_total_limit}")
+    print(f"load_best_model_at_end: {training_args.load_best_model_at_end}")
+    print(f"metric_for_best_model: {training_args.metric_for_best_model}")
+    print(f"greater_is_better: {training_args.greater_is_better}")
+    print(f"fp16: {training_args.fp16}")
+    print(f"dataloader_num_workers: {training_args.dataloader_num_workers}")
+    print(f"gradient_accumulation_steps: {training_args.gradient_accumulation_steps}")
+    print(f"report_to: {training_args.report_to}")
 
     # 모델을 초기화하기 전에 난수를 고정합니다.
     set_seed(training_args.seed)
 
-    datasets = load_from_disk(data_args.dataset_name)
-    print(datasets)
+    datasets = load_from_disk(data_args.train_dataset_name)
+    logger.info("load datasets: \n", datasets)
 
     # AutoConfig를 이용하여 pretrained model 과 tokenizer를 불러옵니다.
     # argument로 원하는 모델 이름을 설정하면 옵션을 바꿀 수 있습니다.
@@ -101,17 +124,15 @@ def main():
         config=config,
     )
 
-    print(
-        type(training_args),
-        type(model_args),
-        type(datasets),
-        type(tokenizer),
-        type(model),
+    logger.info(
+        f"training_args type: {type(training_args)}, "
+        f"model_args type: {type(model_args)}, "
+        f"datasets type: {type(datasets)}, "
+        f"tokenizer type: {type(tokenizer)}, "
+        f"model type: {type(model)}"
     )
 
-    # do_train mrc model 혹은 do_eval mrc model
-    if training_args.do_train or training_args.do_eval:
-        run_mrc(data_args, training_args, model_args, datasets, tokenizer, model)
+    run_mrc(data_args, training_args, model_args, datasets, tokenizer, model)
 
 
 def run_mrc(
@@ -124,7 +145,6 @@ def run_mrc(
 ) -> NoReturn:
 
     # dataset을 전처리합니다.
-    # training과 evaluation에서 사용되는 전처리는 아주 조금 다른 형태를 가집니다.
     if training_args.do_train:
         column_names = datasets["train"].column_names
     else:
@@ -155,6 +175,7 @@ def run_mrc(
     )
 
     # Train preprocessing / 전처리를 진행합니다.
+
     def prepare_train_features(examples):
         # truncation과 padding(length가 짧을때만)을 통해 toknization을 진행하며, stride를 이용하여 overflow를 유지합니다.
         # 각 example들은 이전의 context와 조금씩 겹치게됩니다.
@@ -285,17 +306,16 @@ def run_mrc(
             ]
         return tokenized_examples
 
-    if training_args.do_eval:
-        eval_dataset = datasets["validation"]
+    eval_dataset = datasets["validation"]
 
-        # Validation Feature 생성
-        eval_dataset = eval_dataset.map(
-            prepare_validation_features,
-            batched=True,
-            num_proc=data_args.preprocessing_num_workers,
-            remove_columns=column_names,
-            load_from_cache_file=not data_args.overwrite_cache,
-        )
+    # Validation Feature 생성
+    eval_dataset = eval_dataset.map(
+        prepare_validation_features,
+        batched=True,
+        num_proc=data_args.preprocessing_num_workers,
+        remove_columns=column_names,
+        load_from_cache_file=not data_args.overwrite_cache,
+    )
 
     # Data collator
     # flag가 True이면 이미 max length로 padding된 상태입니다.
@@ -318,19 +338,15 @@ def run_mrc(
         formatted_predictions = [
             {"id": k, "prediction_text": v} for k, v in predictions.items()
         ]
-        if training_args.do_predict:
-            return formatted_predictions
-
-        elif training_args.do_eval:
-            references = [
-                {"id": ex["id"], "answers": ex[answer_column_name]}
-                for ex in datasets["validation"]
-            ]
-            return EvalPrediction(
-                predictions=formatted_predictions, label_ids=references
-            )
+        # 항상 EvalPrediction 반환
+        references = [
+            {"id": ex["id"], "answers": ex[answer_column_name]}
+            for ex in datasets["validation"]
+        ]
+        return EvalPrediction(predictions=formatted_predictions, label_ids=references)
 
     metric = evaluate.load("squad")
+    logger.info("---- metric loaded: %s ----", metric)
 
     def compute_metrics(p: EvalPrediction):
         return metric.compute(predictions=p.predictions, references=p.label_ids)
@@ -340,55 +356,68 @@ def run_mrc(
         model=model,
         args=training_args,
         train_dataset=train_dataset if training_args.do_train else None,
-        eval_dataset=eval_dataset if training_args.do_eval else None,
-        eval_examples=datasets["validation"] if training_args.do_eval else None,
+        eval_dataset=eval_dataset,
+        eval_examples=datasets["validation"],
         tokenizer=tokenizer,
         data_collator=data_collator,
         post_process_function=post_processing_function,
         compute_metrics=compute_metrics,
     )
-    
-    
-    # Training
-    if training_args.do_train:
-        if last_checkpoint is not None:
-            checkpoint = last_checkpoint
-        elif os.path.isdir(model_args.model_name_or_path):
-            checkpoint = model_args.model_name_or_path
-        else:
-            checkpoint = None
-        train_result = trainer.train(resume_from_checkpoint=checkpoint)
-        trainer.save_model()  # Saves the tokenizer too for easy upload
 
-        metrics = train_result.metrics
-        metrics["train_samples"] = len(train_dataset)
+    # Training (fresh run 방식으로 수정; 필요하면 YAML에 resume_from_checkpoint 명시)
+    logger.info(
+        "Starting training: model=%s, output_dir=%s",
+        model_args.model_name_or_path,
+        training_args.output_dir,
+    )
 
-        trainer.log_metrics("train", metrics)
-        trainer.save_metrics("train", metrics)
-        trainer.save_state()
+    train_result = trainer.train(
+        resume_from_checkpoint=getattr(training_args, "resume_from_checkpoint", None)
+    )
 
-        output_train_file = os.path.join(training_args.output_dir, "train_results.txt")
+    logger.info("Training completed.")
+    logger.info("Saving model to %s", training_args.output_dir)
+    logger.info(f"최종 훈련 결과: {train_result.metrics}")
 
-        with open(output_train_file, "w") as writer:
-            logger.info("***** Train results *****")
-            for key, value in sorted(train_result.metrics.items()):
-                logger.info(f"  {key} = {value}")
-                writer.write(f"{key} = {value}\n")
+    trainer.save_model()  # tokenizer까지 함께 저장
+    trainer.save_state()
 
-        # State 저장
-        trainer.state.save_to_json(
-            os.path.join(training_args.output_dir, "trainer_state.json")
-        )
+    metrics = train_result.metrics
+    metrics["train_samples"] = len(train_dataset)
+
+    trainer.log_metrics("train", metrics)
+    trainer.save_metrics("train", metrics)
+
+    output_train_file = os.path.join(training_args.output_dir, "train_results.txt")
+    with open(output_train_file, "w") as writer:
+        logger.info("***** Train results *****")
+        for key, value in sorted(train_result.metrics.items()):
+            logger.info(f"  {key} = {value}")
+            writer.write(f"{key} = {value}\n")
+
+    # State 저장
+    trainer.state.save_to_json(
+        os.path.join(training_args.output_dir, "trainer_state.json")
+    )
 
     # Evaluation
-    if training_args.do_eval:
-        logger.info("*** Evaluate ***")
-        metrics = trainer.evaluate()
+    logger.info(
+        "Running final evaluation on validation set (%d examples)",
+        len(eval_dataset),
+    )
+    logger.info(f"Best metric: {trainer.state.best_metric}")
+    logger.info(f"Best model checkpoint: {trainer.state.best_model_checkpoint}")
 
-        metrics["eval_samples"] = len(eval_dataset)
+    metrics = trainer.evaluate()
+    metrics["eval_samples"] = len(eval_dataset)
+    trainer.log_metrics("eval", metrics)
+    trainer.save_metrics("eval", metrics)
 
-        trainer.log_metrics("eval", metrics)
-        trainer.save_metrics("eval", metrics)
+    # 학습에 사용된 yaml config 파일을 output_dir에 복사
+    if len(sys.argv) == 2 and sys.argv[1].endswith(".yaml"):
+        os.makedirs(training_args.output_dir, exist_ok=True)
+        shutil.copy2(sys.argv[1],
+                     os.path.join(training_args.output_dir, "config_used.yaml"))
 
 
 if __name__ == "__main__":

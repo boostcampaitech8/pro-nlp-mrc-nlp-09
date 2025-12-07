@@ -7,3 +7,7 @@ evaluate==0.4.6
 
 # faiss install (if you want to)
 # faiss-gpu
+
+# 사용자 추가 스크립트
+pyyaml>=6.0
+colorlog
