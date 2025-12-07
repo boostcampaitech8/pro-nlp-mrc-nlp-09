@@ -8,7 +8,7 @@ import torch
 import evaluate
 from typing import NoReturn
 
-from src.arguments import DataTrainingArguments, ModelArguments
+from src.arguments import DataTrainingArguments, ModelArguments, CustomTrainingArguments
 from datasets import DatasetDict, load_from_disk
 from src.trainer_qa import QuestionAnsweringTrainer
 from transformers import (
@@ -49,7 +49,7 @@ def main():
     # --help flag 를 실행시켜서 확인할 수 도 있습니다.
 
     parser = HfArgumentParser(
-        (ModelArguments, DataTrainingArguments, TrainingArguments)
+        (ModelArguments, DataTrainingArguments, CustomTrainingArguments)
     )
 
     model_args, data_args, training_args = get_config(parser)
@@ -158,11 +158,19 @@ def run_mrc(
     # (question|context) 혹은 (context|question)로 세팅 가능합니다.
     pad_on_right = tokenizer.padding_side == "right"
 
-    # 모델에 따라 token_type_ids 지원 여부 자동 판별
-    use_return_token_type_ids = "token_type_ids" in tokenizer.model_input_names
+    # 모델 타입에 따라 token_type_ids 사용 여부 결정
+    # RoBERTa, DeBERTa, ELECTRA 등은 token_type_ids를 사용하지 않음
+    # 저장된 모델의 경우 config에서 model_type을 확인
+    model_type = getattr(config, 'model_type', '').lower()
+    model_name_lower = model_args.model_name_or_path.lower()
+    use_token_type_ids = not any(
+        mt in model_name_lower or mt in model_type
+        for mt in ['roberta', 'deberta', 'electra', 'xlm']
+    )
+    print(f"Model type: {model_type}, use_token_type_ids: {use_token_type_ids}")
 
-    # 오류가 있는지 확인합니다. (checkpoint는 무시, max_seq_length만 사용)
-    _, max_seq_length = check_no_error(
+    # 오류가 있는지 확인합니다.
+    last_checkpoint, max_seq_length = check_no_error(
         data_args, training_args, datasets, tokenizer
     )
 
@@ -179,7 +187,7 @@ def run_mrc(
             stride=data_args.doc_stride,
             return_overflowing_tokens=True,
             return_offsets_mapping=True,
-            return_token_type_ids=use_return_token_type_ids,
+            return_token_type_ids=use_token_type_ids,  # BERT: True, RoBERTa/DeBERTa/ELECTRA: False
             padding="max_length" if data_args.pad_to_max_length else False,
         )
 
@@ -271,7 +279,7 @@ def run_mrc(
             stride=data_args.doc_stride,
             return_overflowing_tokens=True,
             return_offsets_mapping=True,
-            # return_token_type_ids=False, # roberta모델을 사용할 경우 False, bert를 사용할 경우 True로 표기해야합니다.
+            return_token_type_ids=use_token_type_ids,  # BERT: True, RoBERTa/DeBERTa/ELECTRA: False
             padding="max_length" if data_args.pad_to_max_length else False,
         )
 
