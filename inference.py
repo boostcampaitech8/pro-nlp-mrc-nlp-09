@@ -112,7 +112,15 @@ def main():
 
     # eval or predict mrc model
     if training_args.do_eval or training_args.do_predict:
-        run_mrc(data_args, training_args, model_args, datasets, tokenizer, model, inference_split)
+        run_mrc(
+            data_args,
+            training_args,
+            model_args,
+            datasets,
+            tokenizer,
+            model,
+            inference_split,
+        )
 
 
 def run_sparse_retrieval(
@@ -277,13 +285,18 @@ def run_mrc(
         training_args: TrainingArguments,
     ) -> EvalPrediction:
         # Post-processing: start logits과 end logits을 original context의 정답과 match시킵니다.
+
+        # inference_split에 따라 prefix 동적 설정
+        prefix_map = {"train": "train", "validation": "val", "test": "test"}
+        prefix = prefix_map.get(inference_split, "test")
+
         predictions = postprocess_qa_predictions(
             examples=examples,
             features=features,
             predictions=predictions,
             max_answer_length=data_args.max_answer_length,
             output_dir=training_args.output_dir,
-            prefix="test",  # inference.py는 test 예측이므로 test_pred.csv 생성
+            prefix=prefix,  # train/val/test에 따라 동적 설정
         )
         # Metric을 구할 수 있도록 Format을 맞춰줍니다.
         formatted_predictions = [
