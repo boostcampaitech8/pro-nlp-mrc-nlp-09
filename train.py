@@ -26,8 +26,10 @@ from src.utils import (
     check_no_error,
     postprocess_qa_predictions,
     wait_for_gpu_availability,
-    get_config, to_serializable, print_section,
-    get_logger
+    get_config,
+    to_serializable,
+    print_section,
+    get_logger,
 )
 
 seed = 2024
@@ -47,6 +49,9 @@ logger = get_logger(__name__)
 def main():
     # 가능한 arguments 들은 ./arguments.py 나 transformer package 안의 src/transformers/training_args.py 에서 확인 가능합니다.
     # --help flag 를 실행시켜서 확인할 수 도 있습니다.
+
+    # gpu 사용 가능한지 체크
+    wait_for_gpu_availability()
 
     parser = HfArgumentParser(
         (ModelArguments, DataTrainingArguments, TrainingArguments)
@@ -68,9 +73,6 @@ def main():
     logger.info("model is from: %s", model_args.model_name_or_path)
     logger.info("data is from: %s", data_args.train_dataset_name)
     logger.info("output_dir is: %s", training_args.output_dir)
-
-    # gpu 사용 가능한지 체크
-    wait_for_gpu_availability()
 
     # 현재 사용 중인 arguments를 한 번에 로그로 남겨두기
     print_section("Model Arguments", model_args)
@@ -143,7 +145,6 @@ def run_mrc(
     tokenizer,
     model,
 ) -> NoReturn:
-
     # dataset을 전처리합니다.
     if training_args.do_train:
         column_names = datasets["train"].column_names
@@ -162,9 +163,7 @@ def run_mrc(
     use_return_token_type_ids = "token_type_ids" in tokenizer.model_input_names
 
     # 오류가 있는지 확인합니다. (checkpoint는 무시, max_seq_length만 사용)
-    _, max_seq_length = check_no_error(
-        data_args, training_args, datasets, tokenizer
-    )
+    _, max_seq_length = check_no_error(data_args, training_args, datasets, tokenizer)
 
     # Train preprocessing / 전처리를 진행합니다.
 
@@ -408,8 +407,9 @@ def run_mrc(
     # 학습에 사용된 yaml config 파일을 output_dir에 복사
     if len(sys.argv) == 2 and sys.argv[1].endswith(".yaml"):
         os.makedirs(training_args.output_dir, exist_ok=True)
-        shutil.copy2(sys.argv[1],
-                     os.path.join(training_args.output_dir, "config_used.yaml"))
+        shutil.copy2(
+            sys.argv[1], os.path.join(training_args.output_dir, "config_used.yaml")
+        )
 
 
 if __name__ == "__main__":
