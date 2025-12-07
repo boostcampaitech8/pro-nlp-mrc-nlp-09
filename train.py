@@ -31,6 +31,12 @@ from src.utils import (
     print_section,
     get_logger,
 )
+from src.utils.metrics_tracker import MetricsTracker
+from src.utils.evaluator import (
+    FinalEvaluator,
+    save_predictions,
+    save_detailed_results,
+)
 
 seed = 2024
 deterministic = False
@@ -159,15 +165,28 @@ def run_mrc(
     # (question|context) 혹은 (context|question)로 세팅 가능합니다.
     pad_on_right = tokenizer.padding_side == "right"
 
-    # 모델에 따라 token_type_ids 지원 여부 자동 판별
-    use_return_token_type_ids = "token_type_ids" in tokenizer.model_input_names
+    # 모델 타입에 따라 token_type_ids 지원 여부 자동 판별
+    # 핵심: tokenizer가 만들 수 있는가가 아니라, 모델이 받을 수 있는가가 중요
+    model_type = getattr(model.config, "model_type", "").lower()
+    tokenizer_says_it_can = "token_type_ids" in getattr(
+        tokenizer, "model_input_names", []
+    )
+    type_vocab_size = getattr(model.config, "type_vocab_size", 0)
+
+    # RoBERTa/XLM-R은 type_vocab_size=1 이라 token_type_ids 넣으면 인덱스 에러 발생
+    use_return_token_type_ids = bool(tokenizer_says_it_can and type_vocab_size > 1)
+
+    print(
+        f"model_type={model_type} | tokenizer_has_token_type_ids={tokenizer_says_it_can} "
+        f"| type_vocab_size={type_vocab_size} | use_return_token_type_ids={use_return_token_type_ids}"
+    )
 
     # 오류가 있는지 확인합니다. (checkpoint는 무시, max_seq_length만 사용)
     _, max_seq_length = check_no_error(data_args, training_args, datasets, tokenizer)
 
     # Train preprocessing / 전처리를 진행합니다.
 
-    def prepare_train_features(examples):
+    def prepare_train_features(examples, _use_token_type_ids=use_return_token_type_ids):
         # truncation과 padding(length가 짧을때만)을 통해 toknization을 진행하며, stride를 이용하여 overflow를 유지합니다.
         # 각 example들은 이전의 context와 조금씩 겹치게됩니다.
         tokenized_examples = tokenizer(
@@ -178,9 +197,13 @@ def run_mrc(
             stride=data_args.doc_stride,
             return_overflowing_tokens=True,
             return_offsets_mapping=True,
-            return_token_type_ids=use_return_token_type_ids,
+            return_token_type_ids=_use_token_type_ids,
             padding="max_length" if data_args.pad_to_max_length else False,
         )
+
+        # 안전장치: 혹시 token_type_ids가 남아있으면 제거
+        if not _use_token_type_ids and "token_type_ids" in tokenized_examples:
+            tokenized_examples.pop("token_type_ids")
 
         # 길이가 긴 context가 등장할 경우 truncate를 진행해야하므로, 해당 데이터셋을 찾을 수 있도록 mapping 가능한 값이 필요합니다.
         sample_mapping = tokenized_examples.pop("overflow_to_sample_mapping")
@@ -259,7 +282,9 @@ def run_mrc(
         )
 
     # Validation preprocessing
-    def prepare_validation_features(examples):
+    def prepare_validation_features(
+        examples, _use_token_type_ids=use_return_token_type_ids
+    ):
         # truncation과 padding(length가 짧을때만)을 통해 toknization을 진행하며, stride를 이용하여 overflow를 유지합니다.
         # 각 example들은 이전의 context와 조금씩 겹치게됩니다.
         tokenized_examples = tokenizer(
@@ -270,9 +295,13 @@ def run_mrc(
             stride=data_args.doc_stride,
             return_overflowing_tokens=True,
             return_offsets_mapping=True,
-            # return_token_type_ids=False, # roberta모델을 사용할 경우 False, bert를 사용할 경우 True로 표기해야합니다.
+            return_token_type_ids=_use_token_type_ids,
             padding="max_length" if data_args.pad_to_max_length else False,
         )
+
+        # 안전장치: 혹시 token_type_ids가 남아있으면 제거
+        if not _use_token_type_ids and "token_type_ids" in tokenized_examples:
+            tokenized_examples.pop("token_type_ids")
 
         # 길이가 긴 context가 등장할 경우 truncate를 진행해야하므로, 해당 데이터셋을 찾을 수 있도록 mapping 가능한 값이 필요합니다.
         sample_mapping = tokenized_examples.pop("overflow_to_sample_mapping")
