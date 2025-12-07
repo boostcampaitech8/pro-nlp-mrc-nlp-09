@@ -11,7 +11,7 @@ class ModelArguments:
     model_name_or_path: str = field(
         default="klue/bert-base",
         metadata={
-            "help": "Path to pretrained model or model identifier from huggingface.co/models"
+            "help": "speicfy the pretrained model name or path to local checkpoint"
         },
     )
     config_name: Optional[str] = field(
@@ -24,6 +24,12 @@ class ModelArguments:
         default=None,
         metadata={
             "help": "Pretrained tokenizer name or path if not the same as model_name"
+        },
+    )
+    use_trained_model: bool = field(
+        default=True,
+        metadata={
+            "help": "For inference: automatically load best checkpoint from output_dir instead of model_name_or_path"
         },
     )
 
@@ -39,14 +45,9 @@ class DataTrainingArguments:
         metadata={"help": "The name of the dataset to use."},
     )
 
-    val_dataset_name: Optional[str] = field(
-        default=None,
-        metadata={"help": "The name of the validation dataset to use."},
-    )
-
-    test_dataset_name: Optional[str] = field(
+    infer_dataset_name: Optional[str] = field(
         default="./data/test_dataset",
-        metadata={"help": "The name of the test dataset to use."},
+        metadata={"help": "The name of the inference dataset to use."},
     )
 
     overwrite_cache: bool = field(
@@ -100,4 +101,11 @@ class DataTrainingArguments:
     )
     use_faiss: bool = field(
         default=False, metadata={"help": "Whether to build with faiss"}
+    )
+    inference_split: str = field(
+        default="test",
+        metadata={
+            "help": "Which split to use for inference: 'train', 'validation', or 'test'. "
+            "If 'test', only do_predict is executed. Otherwise, both do_eval and do_predict are executed."
+        },
     )
