@@ -31,16 +31,24 @@ doc_stride: 128
 max_answer_length: 30
 
 # retrieval 관련
-eval_retrieval: true
+eval_retrieval: true         # inference 시 retrieval 사용 여부
 num_clusters:
 top_k_retrieval: 10
 use_faiss: false
 
 # [Inference 전용 설정]
+# ⚠️ 중요: Split별 정책
+# - test: gold context 없음 → eval_retrieval=True 필수 (자동 검증)
+# - validation: gold context 있음 → eval_retrieval 선택 가능
+# - train: gold context 있음 → eval_retrieval 선택 가능
 inference_split: test        # 추론할 데이터 선택 (train/validation/test)
                              # - train: train_dataset의 train split 사용 (do_eval + do_predict)
                              # - validation: train_dataset의 validation split 사용 (do_eval + do_predict)
                              # - test: infer_dataset_name 사용 (do_predict만, 제출용, 기본값)
+
+# 💡 compare_retrieval은 validation 전용 기능
+# gold context vs retrieval context 성능 비교 (비용 클 수도 있음 필요시만 true)
+compare_retrieval: false     # validation에서만 사용, test는 이미 retrieval 필수
 
 ##################################
 # --- training (TrainingArguments) ---
@@ -56,12 +64,13 @@ weight_decay: 0.01
 # logging & save 전략 (247 steps/epoch 기준)
 logging_steps: 50
 logging_first_step: true
-eval_strategy: epoch
-save_strategy: epoch
-save_total_limit: 2
-load_best_model_at_end: true
-metric_for_best_model: "exact_match"
-greater_is_better: true
+eval_strategy: epoch                      # 에포크마다 평가
+save_strategy: epoch                      # 에포크마다 저장
+save_total_limit: 2                       # 최근 2개 checkpoint만 유지 (디스크 절약)
+load_best_model_at_end: true              # ⭐ 학습 종료 시 best checkpoint 자동 로드
+metric_for_best_model: "exact_match"      # ⭐ EM 기준으로 best model 선택
+greater_is_better: true                   # ⭐ EM이 높을수록 좋음
+save_safetensors: true                    # safetensors 형식으로 저장 (권장, 더 안전하고 빠름)
 
 # 기타 설정
 fp16: # 큰 모델 양자화

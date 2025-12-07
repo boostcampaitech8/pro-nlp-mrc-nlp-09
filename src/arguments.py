@@ -109,3 +109,10 @@ class DataTrainingArguments:
             "If 'test', only do_predict is executed. Otherwise, both do_eval and do_predict are executed."
         },
     )
+    compare_retrieval: bool = field(
+        default=False,
+        metadata={
+            "help": "For validation inference: compare gold context vs retrieval performance. "
+            "Only used when inference_split='validation'. Runs inference twice (gold + retrieval)."
+        },
+    )
