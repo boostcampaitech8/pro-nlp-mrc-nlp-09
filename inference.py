@@ -9,7 +9,7 @@ from typing import Callable, Dict, List, NoReturn, Tuple
 
 import evaluate
 import numpy as np
-from src.arguments import DataTrainingArguments, ModelArguments
+from src.arguments import DataTrainingArguments, ModelArguments, CustomTrainingArguments
 from datasets import (
     Dataset,
     DatasetDict,

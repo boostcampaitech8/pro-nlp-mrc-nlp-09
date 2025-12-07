@@ -1,5 +1,6 @@
 from dataclasses import dataclass, field
 from typing import Optional
+from transformers import TrainingArguments
 
 
 @dataclass
@@ -9,7 +10,7 @@ class ModelArguments:
     """
 
     model_name_or_path: str = field(
-        default="klue/bert-base",
+        default="uomnf97/klue-roberta-finetuned-korquad-v2",
         metadata={
             "help": "speicfy the pretrained model name or path to local checkpoint"
         },

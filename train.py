@@ -8,7 +8,7 @@ import torch
 import evaluate
 from typing import NoReturn
 
-from src.arguments import DataTrainingArguments, ModelArguments
+from src.arguments import DataTrainingArguments, ModelArguments, CustomTrainingArguments
 from datasets import DatasetDict, load_from_disk
 from src.trainer_qa import QuestionAnsweringTrainer
 from transformers import (
@@ -61,7 +61,7 @@ def main():
     wait_for_gpu_availability()
 
     parser = HfArgumentParser(
-        (ModelArguments, DataTrainingArguments, TrainingArguments)
+        (ModelArguments, DataTrainingArguments, CustomTrainingArguments)
     )
 
     model_args, data_args, training_args = get_config(parser)
