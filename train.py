@@ -406,7 +406,8 @@ def run_mrc(
 
     # 모델 저장 (safetensors는 자동으로 처리됨)
     trainer.save_model()  # tokenizer까지 함께 저장
-    trainer.save_state()
+    # 💾 용량 절약: trainer.save_state() 제거 (optimizer.pt, scheduler.pt 저장 안함)
+    # trainer.save_state()  # ← 이거 호출하면 optimizer.pt (2.5GB) + scheduler.pt 등이 저장됨
 
     # ✅ Best checkpoint 경로 명시적으로 저장 (inference에서 사용)
     if trainer.state.best_model_checkpoint:
