@@ -136,12 +136,7 @@ ifndef CONFIG
 	@exit 1
 endif
 	@echo "$(BLUE)🔍 Validating $(CONFIG)...$(NC)"
-	@$(PYTHON) -c "\
-	from transformers import HfArgumentParser; \
-	from src.arguments import ModelArguments, DataTrainingArguments, TrainingArguments; \
-	parser = HfArgumentParser((ModelArguments, DataTrainingArguments, TrainingArguments)); \
-	parser.parse_yaml_file('$(CONFIG)'); \
-	print('$(GREEN)✅ YAML 설정이 유효합니다!$(NC)')" || \
+	@$(PYTHON) -c "from transformers import HfArgumentParser; from src.arguments import ModelArguments, DataTrainingArguments, TrainingArguments; parser = HfArgumentParser((ModelArguments, DataTrainingArguments, TrainingArguments)); parser.parse_yaml_file('$(CONFIG)'); print('✅ YAML 설정이 유효합니다!')" && echo "$(GREEN)✅ YAML 설정이 유효합니다!$(NC)" || \
 	(echo "$(RED)❌ YAML 설정이 잘못되었습니다$(NC)" && exit 1)
 
 check-active: ## configs/active/ 모든 설정 파일 유효성 검증
@@ -154,12 +149,7 @@ check-active: ## configs/active/ 모든 설정 파일 유효성 검증
 	for config in $(ACTIVE_DIR)/*.yaml; do \
 		echo ""; \
 		echo "Checking $$config..."; \
-		$(PYTHON) -c "\
-		from transformers import HfArgumentParser; \
-		from src.arguments import ModelArguments, DataTrainingArguments, TrainingArguments; \
-		parser = HfArgumentParser((ModelArguments, DataTrainingArguments, TrainingArguments)); \
-		parser.parse_yaml_file('$$config'); \
-		print('  $(GREEN)✓ Valid$(NC)')" || \
+		$(PYTHON) -c "from transformers import HfArgumentParser; from src.arguments import ModelArguments, DataTrainingArguments, TrainingArguments; parser = HfArgumentParser((ModelArguments, DataTrainingArguments, TrainingArguments)); parser.parse_yaml_file('$$config'); print('  ✓ Valid')" && echo "  $(GREEN)✓ Valid$(NC)" || \
 		(echo "  $(RED)✗ Invalid$(NC)" && failed=$$((failed+1))); \
 	done; \
 	echo ""; \
