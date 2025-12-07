@@ -167,6 +167,7 @@ def save_prediction_analysis(
     return csv_path
 
 
+# TODO: confidence 계산 오류 존재함
 def save_prediction_analysis_with_logits(
     start_logits: np.ndarray,
     end_logits: np.ndarray,
