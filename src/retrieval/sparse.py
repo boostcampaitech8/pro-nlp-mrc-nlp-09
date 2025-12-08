@@ -162,22 +162,21 @@ class SparseRetrieval:
                 Ground Truth가 없는 Query (test) -> Retrieval한 Passage만 반환합니다.
         """
 
-        assert (
-            self.p_embedding is not None
-        ), "get_sparse_embedding() 메소드를 먼저 수행해줘야합니다."
+        assert self.p_embedding is not None, (
+            "get_sparse_embedding() 메소드를 먼저 수행해줘야합니다."
+        )
 
         if isinstance(query_or_dataset, str):
             doc_scores, doc_indices = self.get_relevant_doc(query_or_dataset, k=topk)
             print("[Search query]\n", query_or_dataset, "\n")
 
             for i in range(topk):
-                print(f"Top-{i+1} passage with score {doc_scores[i]:4f}")
+                print(f"Top-{i + 1} passage with score {doc_scores[i]:4f}")
                 print(self.contexts[doc_indices[i]])
 
             return (doc_scores, [self.contexts[doc_indices[i]] for i in range(topk)])
 
         elif isinstance(query_or_dataset, Dataset):
-
             # Retrieve한 Passage를 pd.DataFrame으로 반환합니다.
             total = []
             with timer("query exhaustive search"):
@@ -218,9 +217,9 @@ class SparseRetrieval:
 
         with timer("transform"):
             query_vec = self.tfidfv.transform([query])
-        assert (
-            np.sum(query_vec) != 0
-        ), "오류가 발생했습니다. 이 오류는 보통 query에 vectorizer의 vocab에 없는 단어만 존재하는 경우 발생합니다."
+        assert np.sum(query_vec) != 0, (
+            "오류가 발생했습니다. 이 오류는 보통 query에 vectorizer의 vocab에 없는 단어만 존재하는 경우 발생합니다."
+        )
 
         with timer("query ex search"):
             result = query_vec * self.p_embedding.T
@@ -246,9 +245,9 @@ class SparseRetrieval:
         """
 
         query_vec = self.tfidfv.transform(queries)
-        assert (
-            np.sum(query_vec) != 0
-        ), "오류가 발생했습니다. 이 오류는 보통 query에 vectorizer의 vocab에 없는 단어만 존재하는 경우 발생합니다."
+        assert np.sum(query_vec) != 0, (
+            "오류가 발생했습니다. 이 오류는 보통 query에 vectorizer의 vocab에 없는 단어만 존재하는 경우 발생합니다."
+        )
 
         result = query_vec * self.p_embedding.T
         if not isinstance(result, np.ndarray):
@@ -300,7 +299,6 @@ class SparseRetrieval:
             return (doc_scores, [self.contexts[doc_indices[i]] for i in range(topk)])
 
         elif isinstance(query_or_dataset, Dataset):
-
             # Retrieve한 Passage를 pd.DataFrame으로 반환합니다.
             queries = query_or_dataset["question"]
             total = []
@@ -343,9 +341,9 @@ class SparseRetrieval:
         """
 
         query_vec = self.tfidfv.transform([query])
-        assert (
-            np.sum(query_vec) != 0
-        ), "오류가 발생했습니다. 이 오류는 보통 query에 vectorizer의 vocab에 없는 단어만 존재하는 경우 발생합니다."
+        assert np.sum(query_vec) != 0, (
+            "오류가 발생했습니다. 이 오류는 보통 query에 vectorizer의 vocab에 없는 단어만 존재하는 경우 발생합니다."
+        )
 
         q_emb = query_vec.toarray().astype(np.float32)
         with timer("query faiss search"):
@@ -367,9 +365,9 @@ class SparseRetrieval:
         """
 
         query_vecs = self.tfidfv.transform(queries)
-        assert (
-            np.sum(query_vecs) != 0
-        ), "오류가 발생했습니다. 이 오류는 보통 query에 vectorizer의 vocab에 없는 단어만 존재하는 경우 발생합니다."
+        assert np.sum(query_vecs) != 0, (
+            "오류가 발생했습니다. 이 오류는 보통 query에 vectorizer의 vocab에 없는 단어만 존재하는 경우 발생합니다."
+        )
 
         q_embs = query_vecs.toarray().astype(np.float32)
         D, I = self.indexer.search(q_embs, k)
@@ -378,7 +376,6 @@ class SparseRetrieval:
 
 
 if __name__ == "__main__":
-
     import argparse
 
     parser = argparse.ArgumentParser(description="")
@@ -426,7 +423,6 @@ if __name__ == "__main__":
     query = "대통령을 포함한 미국의 행정부 견제권을 갖는 국가 기관은?"
 
     if args.use_faiss:
-
         # test single query
         with timer("single query by faiss"):
             scores, indices = retriever.retrieve_faiss(query)

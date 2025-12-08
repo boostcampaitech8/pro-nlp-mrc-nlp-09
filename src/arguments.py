@@ -12,7 +12,7 @@ class ModelArguments:
     model_name_or_path: str = field(
         default="uomnf97/klue-roberta-finetuned-korquad-v2",
         metadata={
-            "help": "Path to pretrained model or model identifier from huggingface.co/models"
+            "help": "speicfy the pretrained model name or path to local checkpoint"
         },
     )
     config_name: Optional[str] = field(
@@ -25,6 +25,12 @@ class ModelArguments:
         default=None,
         metadata={
             "help": "Pretrained tokenizer name or path if not the same as model_name"
+        },
+    )
+    use_trained_model: bool = field(
+        default=True,
+        metadata={
+            "help": "For inference: automatically load best checkpoint from output_dir instead of model_name_or_path"
         },
     )
 
@@ -40,14 +46,9 @@ class DataTrainingArguments:
         metadata={"help": "The name of the dataset to use."},
     )
 
-    val_dataset_name: Optional[str] = field(
-        default=None,
-        metadata={"help": "The name of the validation dataset to use."},
-    )
-
-    test_dataset_name: Optional[str] = field(
+    infer_dataset_name: Optional[str] = field(
         default="./data/test_dataset",
-        metadata={"help": "The name of the test dataset to use."},
+        metadata={"help": "The name of the inference dataset to use."},
     )
 
     overwrite_cache: bool = field(
@@ -102,67 +103,17 @@ class DataTrainingArguments:
     use_faiss: bool = field(
         default=False, metadata={"help": "Whether to build with faiss"}
     )
-
-
-@dataclass
-class CustomTrainingArguments(TrainingArguments):
-    """
-    학습 하이퍼파라미터 기본값 설정
-    CLI에서 별도로 지정하지 않으면 이 값들이 사용됩니다.
-    """
-    
-    # 학습 기본 설정
-    num_train_epochs: float = field(
-        default=3.0,
-        metadata={"help": "Total number of training epochs"}
+    inference_split: str = field(
+        default="test",
+        metadata={
+            "help": "Which split to use for inference: 'train', 'validation', or 'test'. "
+            "If 'test', only do_predict is executed. Otherwise, both do_eval and do_predict are executed."
+        },
     )
-    learning_rate: float = field(
-        default=2e-5,
-        metadata={"help": "Initial learning rate for AdamW optimizer"}
-    )
-    per_device_train_batch_size: int = field(
-        default=8,
-        metadata={"help": "Batch size per GPU/CPU for training"}
-    )
-    per_device_eval_batch_size: int = field(
-        default=8,
-        metadata={"help": "Batch size per GPU/CPU for evaluation"}
-    )
-    
-    # 최적화 설정
-    warmup_ratio: float = field(
-        default=0.1,
-        metadata={"help": "Ratio of total training steps for warmup"}
-    )
-    weight_decay: float = field(
-        default=0.01,
-        metadata={"help": "Weight decay for AdamW optimizer"}
-    )
-    gradient_accumulation_steps: int = field(
-        default=1,
-        metadata={"help": "Number of updates steps to accumulate before backward pass"}
-    )
-    
-    # 저장/평가 설정
-    save_strategy: str = field(
-        default="no",
-        metadata={"help": "Save strategy: 'no', 'steps', 'epoch'"}
-    )
-    save_total_limit: int = field(
-        default=2,
-        metadata={"help": "Maximum number of checkpoints to keep"}
-    )
-    evaluation_strategy: str = field(
-        default="epoch",
-        metadata={"help": "Evaluation strategy: 'no', 'steps', 'epoch'"}
-    )
-    logging_steps: int = field(
-        default=100,
-        metadata={"help": "Log every X steps"}
-    )
-    
-    # 성능 최적화
-    fp16: bool = field(
-        default=True,
-        metadata={"help": "Use mixed precision training"}
+    compare_retrieval: bool = field(
+        default=False,
+        metadata={
+            "help": "For validation inference: compare gold context vs retrieval performance. "
+            "Only used when inference_split='validation'. Runs inference twice (gold + retrieval)."
+        },
     )

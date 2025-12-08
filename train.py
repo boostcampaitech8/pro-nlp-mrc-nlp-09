@@ -8,7 +8,7 @@ import torch
 import evaluate
 from typing import NoReturn
 
-from src.arguments import DataTrainingArguments, ModelArguments, CustomTrainingArguments
+from src.arguments import DataTrainingArguments, ModelArguments
 from datasets import DatasetDict, load_from_disk
 from src.trainer_qa import QuestionAnsweringTrainer
 from transformers import (
@@ -26,9 +26,18 @@ from src.utils import (
     check_no_error,
     postprocess_qa_predictions,
     wait_for_gpu_availability,
-    get_config, to_serializable, print_section,
-    get_logger
+    get_config,
+    to_serializable,
+    print_section,
+    get_logger,
 )
+from src.utils.metrics_tracker import MetricsTracker
+from src.utils.evaluator import (
+    FinalEvaluator,
+    save_predictions,
+    save_detailed_results,
+)
+from src.utils.analysis import save_prediction_analysis
 
 seed = 2024
 deterministic = False
@@ -48,8 +57,11 @@ def main():
     # 가능한 arguments 들은 ./arguments.py 나 transformer package 안의 src/transformers/training_args.py 에서 확인 가능합니다.
     # --help flag 를 실행시켜서 확인할 수 도 있습니다.
 
+    # gpu 사용 가능한지 체크
+    wait_for_gpu_availability()
+
     parser = HfArgumentParser(
-        (ModelArguments, DataTrainingArguments, CustomTrainingArguments)
+        (ModelArguments, DataTrainingArguments, TrainingArguments)
     )
 
     model_args, data_args, training_args = get_config(parser)
@@ -68,9 +80,6 @@ def main():
     logger.info("model is from: %s", model_args.model_name_or_path)
     logger.info("data is from: %s", data_args.train_dataset_name)
     logger.info("output_dir is: %s", training_args.output_dir)
-
-    # gpu 사용 가능한지 체크
-    wait_for_gpu_availability()
 
     # 현재 사용 중인 arguments를 한 번에 로그로 남겨두기
     print_section("Model Arguments", model_args)
@@ -143,7 +152,6 @@ def run_mrc(
     tokenizer,
     model,
 ) -> NoReturn:
-
     # dataset을 전처리합니다.
     if training_args.do_train:
         column_names = datasets["train"].column_names
@@ -158,25 +166,28 @@ def run_mrc(
     # (question|context) 혹은 (context|question)로 세팅 가능합니다.
     pad_on_right = tokenizer.padding_side == "right"
 
-    # 모델 타입에 따라 token_type_ids 사용 여부 결정
-    # RoBERTa, DeBERTa, ELECTRA 등은 token_type_ids를 사용하지 않음
-    # 저장된 모델의 경우 config에서 model_type을 확인
-    model_type = getattr(config, 'model_type', '').lower()
-    model_name_lower = model_args.model_name_or_path.lower()
-    use_token_type_ids = not any(
-        mt in model_name_lower or mt in model_type
-        for mt in ['roberta', 'deberta', 'electra', 'xlm']
+    # 모델 타입에 따라 token_type_ids 지원 여부 자동 판별
+    # 핵심: tokenizer가 만들 수 있는가가 아니라, 모델이 받을 수 있는가가 중요
+    model_type = getattr(model.config, "model_type", "").lower()
+    tokenizer_says_it_can = "token_type_ids" in getattr(
+        tokenizer, "model_input_names", []
     )
-    print(f"Model type: {model_type}, use_token_type_ids: {use_token_type_ids}")
+    type_vocab_size = getattr(model.config, "type_vocab_size", 0)
 
-    # 오류가 있는지 확인합니다.
-    last_checkpoint, max_seq_length = check_no_error(
-        data_args, training_args, datasets, tokenizer
+    # RoBERTa/XLM-R은 type_vocab_size=1 이라 token_type_ids 넣으면 인덱스 에러 발생
+    use_return_token_type_ids = bool(tokenizer_says_it_can and type_vocab_size > 1)
+
+    print(
+        f"model_type={model_type} | tokenizer_has_token_type_ids={tokenizer_says_it_can} "
+        f"| type_vocab_size={type_vocab_size} | use_return_token_type_ids={use_return_token_type_ids}"
     )
+
+    # 오류가 있는지 확인합니다. (checkpoint는 무시, max_seq_length만 사용)
+    _, max_seq_length = check_no_error(data_args, training_args, datasets, tokenizer)
 
     # Train preprocessing / 전처리를 진행합니다.
 
-    def prepare_train_features(examples):
+    def prepare_train_features(examples, _use_token_type_ids=use_return_token_type_ids):
         # truncation과 padding(length가 짧을때만)을 통해 toknization을 진행하며, stride를 이용하여 overflow를 유지합니다.
         # 각 example들은 이전의 context와 조금씩 겹치게됩니다.
         tokenized_examples = tokenizer(
@@ -187,9 +198,13 @@ def run_mrc(
             stride=data_args.doc_stride,
             return_overflowing_tokens=True,
             return_offsets_mapping=True,
-            return_token_type_ids=use_token_type_ids,  # BERT: True, RoBERTa/DeBERTa/ELECTRA: False
+            return_token_type_ids=_use_token_type_ids,
             padding="max_length" if data_args.pad_to_max_length else False,
         )
+
+        # 안전장치: 혹시 token_type_ids가 남아있으면 제거
+        if not _use_token_type_ids and "token_type_ids" in tokenized_examples:
+            tokenized_examples.pop("token_type_ids")
 
         # 길이가 긴 context가 등장할 경우 truncate를 진행해야하므로, 해당 데이터셋을 찾을 수 있도록 mapping 가능한 값이 필요합니다.
         sample_mapping = tokenized_examples.pop("overflow_to_sample_mapping")
@@ -268,7 +283,9 @@ def run_mrc(
         )
 
     # Validation preprocessing
-    def prepare_validation_features(examples):
+    def prepare_validation_features(
+        examples, _use_token_type_ids=use_return_token_type_ids
+    ):
         # truncation과 padding(length가 짧을때만)을 통해 toknization을 진행하며, stride를 이용하여 overflow를 유지합니다.
         # 각 example들은 이전의 context와 조금씩 겹치게됩니다.
         tokenized_examples = tokenizer(
@@ -279,9 +296,13 @@ def run_mrc(
             stride=data_args.doc_stride,
             return_overflowing_tokens=True,
             return_offsets_mapping=True,
-            return_token_type_ids=use_token_type_ids,  # BERT: True, RoBERTa/DeBERTa/ELECTRA: False
+            return_token_type_ids=_use_token_type_ids,
             padding="max_length" if data_args.pad_to_max_length else False,
         )
+
+        # 안전장치: 혹시 token_type_ids가 남아있으면 제거
+        if not _use_token_type_ids and "token_type_ids" in tokenized_examples:
+            tokenized_examples.pop("token_type_ids")
 
         # 길이가 긴 context가 등장할 경우 truncate를 진행해야하므로, 해당 데이터셋을 찾을 수 있도록 mapping 가능한 값이 필요합니다.
         sample_mapping = tokenized_examples.pop("overflow_to_sample_mapping")
@@ -351,17 +372,21 @@ def run_mrc(
     def compute_metrics(p: EvalPrediction):
         return metric.compute(predictions=p.predictions, references=p.label_ids)
 
+    # Metrics Tracker 초기화
+    metrics_tracker = MetricsTracker(output_dir=training_args.output_dir)
+
     # Trainer 초기화
     trainer = QuestionAnsweringTrainer(
         model=model,
         args=training_args,
-        train_dataset=train_dataset if training_args.do_train else None,
+        train_dataset=train_dataset,
         eval_dataset=eval_dataset,
         eval_examples=datasets["validation"],
         tokenizer=tokenizer,
         data_collator=data_collator,
         post_process_function=post_processing_function,
         compute_metrics=compute_metrics,
+        callbacks=[metrics_tracker],  # Metrics Tracker 추가
     )
 
     # Training (fresh run 방식으로 수정; 필요하면 YAML에 resume_from_checkpoint 명시)
@@ -379,8 +404,26 @@ def run_mrc(
     logger.info("Saving model to %s", training_args.output_dir)
     logger.info(f"최종 훈련 결과: {train_result.metrics}")
 
+    # 모델 저장 (safetensors는 자동으로 처리됨)
     trainer.save_model()  # tokenizer까지 함께 저장
-    trainer.save_state()
+    # 💾 용량 절약: trainer.save_state() 제거 (optimizer.pt, scheduler.pt 저장 안함)
+    # trainer.save_state()  # ← 이거 호출하면 optimizer.pt (2.5GB) + scheduler.pt 등이 저장됨
+
+    # ✅ Best checkpoint 경로 명시적으로 저장 (inference에서 사용)
+    if trainer.state.best_model_checkpoint:
+        best_checkpoint_path = os.path.join(
+            training_args.output_dir, "best_checkpoint_path.txt"
+        )
+        with open(best_checkpoint_path, "w") as f:
+            f.write(trainer.state.best_model_checkpoint)
+        logger.info(f"✅ Best checkpoint saved: {trainer.state.best_model_checkpoint}")
+        logger.info(
+            f"   Best metric ({training_args.metric_for_best_model}): {trainer.state.best_metric}"
+        )
+    else:
+        logger.warning(
+            "⚠️  No best checkpoint found (load_best_model_at_end might be False)"
+        )
 
     metrics = train_result.metrics
     metrics["train_samples"] = len(train_dataset)
@@ -400,24 +443,153 @@ def run_mrc(
         os.path.join(training_args.output_dir, "trainer_state.json")
     )
 
-    # Evaluation
-    logger.info(
-        "Running final evaluation on validation set (%d examples)",
-        len(eval_dataset),
-    )
-    logger.info(f"Best metric: {trainer.state.best_metric}")
-    logger.info(f"Best model checkpoint: {trainer.state.best_model_checkpoint}")
+    # Evaluation - try-except로 감싸서 평가 실패해도 학습 결과는 보존
+    try:
+        logger.info(
+            "Running final evaluation on validation set (%d examples)",
+            len(eval_dataset),
+        )
+        logger.info(f"Best metric: {trainer.state.best_metric}")
+        logger.info(f"Best model checkpoint: {trainer.state.best_model_checkpoint}")
 
-    metrics = trainer.evaluate()
-    metrics["eval_samples"] = len(eval_dataset)
-    trainer.log_metrics("eval", metrics)
-    trainer.save_metrics("eval", metrics)
+        metrics = trainer.evaluate()
+        metrics["eval_samples"] = len(eval_dataset)
+        trainer.log_metrics("eval", metrics)
+        trainer.save_metrics("eval", metrics)
+    except Exception as e:
+        logger.warning(f"⚠️  Final evaluation failed: {e}")
+        logger.warning("   Best checkpoint is already saved in output directory")
+
+    # 학습 요약 출력
+    metrics_tracker.print_summary()
+
+    # 최종 성능 평가 (train + validation)
+    # 주의: 이 부분이 실패해도 위에서 이미 best checkpoint는 저장됨
+    try:
+        logger.info("=" * 80)
+        logger.info("Running final performance evaluation on all splits...")
+        logger.info("=" * 80)
+
+        final_evaluator = FinalEvaluator(output_dir=training_args.output_dir)
+
+        # 1. Train set 평가 (validation 형식으로 변환 필요)
+        logger.info("Evaluating on TRAIN set...")
+        train_dataset_for_eval = datasets["train"].map(
+            prepare_validation_features,
+            batched=True,
+            num_proc=data_args.preprocessing_num_workers,
+            remove_columns=column_names,
+            load_from_cache_file=False,  # 캐시 충돌 방지: 여러 모델 연달아 실행 시 필수
+            desc="Preparing train features for evaluation",
+        )
+        train_predictions = trainer.predict(
+            test_dataset=train_dataset_for_eval, test_examples=datasets["train"]
+        )
+        # predictions는 리스트 형태 [{"id": ..., "prediction_text": ...}, ...]
+        train_pred_dict = {
+            pred["id"]: pred["prediction_text"]
+            for pred in train_predictions.predictions
+        }
+        train_ref_dict = {ex["id"]: ex[answer_column_name] for ex in datasets["train"]}
+
+        # train에서는 retrieval 사용 안함
+        final_evaluator.evaluate_split(
+            predictions=train_pred_dict,
+            references=train_ref_dict,
+            split_name="train",
+            with_retrieval=False,
+        )
+        save_predictions(train_pred_dict, training_args.output_dir, "train")
+        # 사후 분석을 위한 confidence 정보 저장 (detailed_results보다 먼저 실행)
+        save_prediction_analysis(
+            train_predictions,
+            datasets["train"],
+            training_args.output_dir,
+            "train",
+            answer_column_name,
+        )
+        save_detailed_results(
+            train_pred_dict, datasets["train"], training_args.output_dir, "train"
+        )
+
+        # 2. Validation set 평가 (이미 평가됨, 결과 저장만)
+        logger.info("Evaluating on VALIDATION set (gold context)...")
+        val_predictions = trainer.predict(
+            test_dataset=eval_dataset, test_examples=datasets["validation"]
+        )
+        # predictions는 리스트 형태 [{"id": ..., "prediction_text": ...}, ...]
+        val_pred_dict = {
+            pred["id"]: pred["prediction_text"] for pred in val_predictions.predictions
+        }
+        val_ref_dict = {
+            ex["id"]: ex[answer_column_name] for ex in datasets["validation"]
+        }
+
+        final_evaluator.evaluate_split(
+            predictions=val_pred_dict,
+            references=val_ref_dict,
+            split_name="validation",
+            with_retrieval=False,
+        )
+        save_predictions(val_pred_dict, training_args.output_dir, "val")
+        # 사후 분석을 위한 confidence 정보 저장 (detailed_results보다 먼저 실행)
+        save_prediction_analysis(
+            val_predictions,
+            datasets["validation"],
+            training_args.output_dir,
+            "val",
+            answer_column_name,
+        )
+        save_detailed_results(
+            val_pred_dict, datasets["validation"], training_args.output_dir, "val"
+        )
+
+        # eval_pred_gold.csv 저장 (gold context 사용한 validation 예측)
+        import csv
+
+        eval_pred_gold_path = os.path.join(
+            training_args.output_dir, "eval_pred_gold.csv"
+        )
+        with open(eval_pred_gold_path, "w", encoding="utf-8") as f:
+            writer = csv.writer(f, delimiter="\t")
+            for key, value in val_pred_dict.items():
+                writer.writerow([key, value])
+        logger.info(
+            f"✅ Validation predictions (gold context) saved to {eval_pred_gold_path}"
+        )
+
+        # 정답 레이블 저장 (스코어링용)
+        import json
+
+        eval_labels_path = os.path.join(training_args.output_dir, "eval_labels.json")
+        with open(eval_labels_path, "w", encoding="utf-8") as f:
+            json.dump(val_ref_dict, f, indent=2, ensure_ascii=False)
+        logger.info(f"✅ Validation labels saved to {eval_labels_path}")
+
+        # 3. 최종 summary 저장 및 출력
+        final_evaluator.save_summary()
+        final_evaluator.print_summary()
+        logger.info("✅ Final performance evaluation completed successfully")
+
+    except Exception as e:
+        logger.warning(f"⚠️  Final evaluation failed (but model is already saved): {e}")
+        logger.warning(
+            "   Best checkpoint and metrics are preserved in output directory"
+        )
+
+    # Best checkpoint 경로를 파일로 저장 (inference에서 자동 로드용) - 이미 위에서 저장했으므로 제거 가능
+    # (중복 방지: 이미 trainer.save_state() 직후에 저장됨)
 
     # 학습에 사용된 yaml config 파일을 output_dir에 복사
     if len(sys.argv) == 2 and sys.argv[1].endswith(".yaml"):
-        os.makedirs(training_args.output_dir, exist_ok=True)
-        shutil.copy2(sys.argv[1],
-                     os.path.join(training_args.output_dir, "config_used.yaml"))
+        config_path = sys.argv[1]
+        if os.path.exists(config_path):
+            os.makedirs(training_args.output_dir, exist_ok=True)
+            shutil.copy2(
+                config_path, os.path.join(training_args.output_dir, "config_used.yaml")
+            )
+        else:
+            logger.warning(f"⚠️  Config file not found: {config_path}")
 
 
 if __name__ == "__main__":

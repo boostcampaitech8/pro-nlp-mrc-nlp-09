@@ -16,6 +16,7 @@
 Pre-processing
 Post-processing utilities for question answering.
 """
+
 import collections
 import json
 import logging
@@ -63,6 +64,7 @@ def postprocess_qa_predictions(
     output_dir: Optional[str] = None,
     prefix: Optional[str] = None,
     is_world_process_zero: bool = True,
+    save_logits: bool = True,
 ):
     """
     Post-processes : qa model의 prediction 값을 후처리하는 함수
@@ -95,14 +97,14 @@ def postprocess_qa_predictions(
         is_world_process_zero (:obj:`bool`, `optional`, defaults to :obj:`True`):
             이 프로세스가 main process인지 여부(logging/save를 수행해야 하는지 여부를 결정하는 데 사용됨)
     """
-    assert (
-        len(predictions) == 2
-    ), "`predictions` should be a tuple with two elements (start_logits, end_logits)."
+    assert len(predictions) == 2, (
+        "`predictions` should be a tuple with two elements (start_logits, end_logits)."
+    )
     all_start_logits, all_end_logits = predictions
 
-    assert len(predictions[0]) == len(
-        features
-    ), f"Got {len(predictions[0])} predictions and {len(features)} features."
+    assert len(predictions[0]) == len(features), (
+        f"Got {len(predictions[0])} predictions and {len(features)} features."
+    )
 
     # example과 mapping되는 feature 생성
     example_id_to_index = {k: i for i, k in enumerate(examples["id"])}
@@ -115,6 +117,9 @@ def postprocess_qa_predictions(
     all_nbest_json = collections.OrderedDict()
     if version_2_with_negative:
         scores_diff_json = collections.OrderedDict()
+
+    # Logits 저장용 (example_id -> {start_logit, end_logit, start_index, end_index})
+    all_logits = {} if save_logits else None
 
     # Logging.
     logger.setLevel(logging.INFO if is_world_process_zero else logging.WARN)
@@ -222,7 +227,6 @@ def postprocess_qa_predictions(
         if len(predictions) == 0 or (
             len(predictions) == 1 and predictions[0]["text"] == ""
         ):
-
             predictions.insert(
                 0, {"text": "empty", "start_logit": 0.0, "end_logit": 0.0, "score": 0.0}
             )
@@ -239,6 +243,7 @@ def postprocess_qa_predictions(
         # best prediction을 선택합니다.
         if not version_2_with_negative:
             all_predictions[example["id"]] = predictions[0]["text"]
+            best_pred = predictions[0]
         else:
             # else case : 먼저 비어 있지 않은 최상의 예측을 찾아야 합니다
             i = 0
@@ -252,11 +257,23 @@ def postprocess_qa_predictions(
                 - best_non_null_pred["start_logit"]
                 - best_non_null_pred["end_logit"]
             )
-            scores_diff_json[example["id"]] = float(score_diff)  # JSON-serializable 가능
+            scores_diff_json[example["id"]] = float(
+                score_diff
+            )  # JSON-serializable 가능
             if score_diff > null_score_diff_threshold:
                 all_predictions[example["id"]] = ""
+                best_pred = predictions[0]  # null prediction
             else:
                 all_predictions[example["id"]] = best_non_null_pred["text"]
+                best_pred = best_non_null_pred
+
+        # Logits 저장 (best prediction의 start/end logits)
+        if save_logits:
+            all_logits[example["id"]] = {
+                "start_logit": float(best_pred["start_logit"]),
+                "end_logit": float(best_pred["end_logit"]),
+                "probability": float(best_pred.get("probability", 0.0)),
+            }
 
         # np.float를 다시 float로 casting -> `predictions`은 JSON-serializable 가능
         all_nbest_json[example["id"]] = [
@@ -277,18 +294,28 @@ def postprocess_qa_predictions(
 
         prediction_file = os.path.join(
             output_dir,
-            "predictions.json" if prefix is None else f"predictions_{prefix}".json,
+            "predictions.json" if prefix is None else f"predictions_{prefix}.json",
         )
         nbest_file = os.path.join(
             output_dir,
             "nbest_predictions.json"
             if prefix is None
-            else f"nbest_predictions_{prefix}".json,
+            else f"nbest_predictions_{prefix}.json",
         )
-        prediction_csv_file = os.path.join(
-            output_dir,
-            "predictions_submit.csv" if prefix is None else f"predictions_submit_{prefix}.csv",
-        )
+        # prefix에 따라 파일명 결정
+        # prefix가 "test"면 test_pred.csv, "eval_gold"면 eval_pred_gold.csv 등
+        if prefix is None:
+            csv_filename = "predictions_submit.csv"
+        elif prefix == "test":
+            csv_filename = "test_pred.csv"
+        elif prefix == "eval_gold":
+            csv_filename = "eval_pred_gold.csv"
+        elif prefix == "eval_retrieval":
+            csv_filename = "eval_pred_retrieval.csv"
+        else:
+            csv_filename = f"predictions_submit_{prefix}.csv"
+
+        prediction_csv_file = os.path.join(output_dir, csv_filename)
         if version_2_with_negative:
             null_odds_file = os.path.join(
                 output_dir,
@@ -310,6 +337,18 @@ def postprocess_qa_predictions(
             for key, value in all_predictions.items():
                 writer.writerow([key, value])
 
+        # Logits 저장
+        if save_logits and all_logits:
+            logits_file = os.path.join(
+                output_dir,
+                "logits.json" if prefix is None else f"logits_{prefix}.json",
+            )
+            logger.info(f"Saving logits to {logits_file}.")
+            with open(logits_file, "w", encoding="utf-8") as writer:
+                writer.write(
+                    json.dumps(all_logits, indent=4, ensure_ascii=False) + "\n"
+                )
+
     return all_predictions
 
 
@@ -319,7 +358,6 @@ def check_no_error(
     datasets: DatasetDict,
     tokenizer,
 ) -> Tuple[Any, int]:
-
     # last checkpoint 찾기.
     last_checkpoint = None
     if (
