@@ -94,7 +94,9 @@ def main():
     print(f"weight_decay: {training_args.weight_decay}")
     print(f"logging_steps: {training_args.logging_steps}")
     print(f"logging_first_step: {training_args.logging_first_step}")
-    print(f"eval_strategy: {training_args.eval_strategy}")
+    # attr 환경 이슈로 아예 주석 처리함
+    # print(f"evaluation_strategy: {training_args.eval_strategy}")
+    # print(f"eval_strategy: {training_args.eval_strategy}")
     print(f"save_strategy: {training_args.save_strategy}")
     print(f"save_total_limit: {training_args.save_total_limit}")
     print(f"load_best_model_at_end: {training_args.load_best_model_at_end}")
@@ -594,3 +596,4 @@ def run_mrc(
 
 if __name__ == "__main__":
     main()
+
