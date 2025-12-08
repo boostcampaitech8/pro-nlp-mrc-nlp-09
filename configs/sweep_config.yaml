@@ -1,0 +1,66 @@
+# WandB Sweep Configuration
+# 하이퍼파라미터 튜닝을 위한 설정
+
+# Sweep 방식
+# - grid: 모든 조합 시도
+# - random: 랜덤 샘플링
+# - bayes: 베이지안 최적화 (추천)
+method: bayes
+
+# 최적화 목표
+metric:
+  name: eval/exact_match  # 최적화할 메트릭
+  goal: maximize          # maximize 또는 minimize
+
+# 조기 종료 설정 (Bayesian 최적화용)
+early_terminate:
+  type: hyperband
+  min_iter: 2            # 최소 2 에포크 후 판단
+  eta: 3                 # 하위 1/3 제거
+
+# 하이퍼파라미터 탐색 공간
+parameters:
+  model_name_or_path:
+    value: uomnf97/klue-roberta-finetuned-korquad-v2  
+
+  # Learning Rate (로그 스케일)
+  learning_rate:
+    distribution: log_uniform_values
+    min: 1e-5
+    max: 5e-5
+
+  # Batch Size (메모리 절약을 위해 작게)
+  per_device_train_batch_size:
+    values: [4, 8]  
+
+  # Epochs
+  num_train_epochs:
+    values: [2, 3, 4]
+
+  # Warmup Ratio
+  warmup_ratio:
+    distribution: uniform
+    min: 0.05
+    max: 0.2
+
+  # Weight Decay
+  weight_decay:
+    distribution: uniform
+    min: 0.0
+    max: 0.1
+
+  # Gradient Accumulation (effective batch size 보완)
+  gradient_accumulation_steps:
+    values: [2, 4, 8]  # 1 제거, 8 추가
+
+  # Max Sequence Length (384 고정으로 메모리 절약)
+  max_seq_length:
+    value: 384  # 512 제거
+
+  # Doc Stride
+  doc_stride:
+    value: [64, 128]
+
+# 고정 파라미터 (탐색하지 않음)
+# 이 값들은 run_sweep.py에서 기본값으로 사용됨
+
