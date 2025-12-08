@@ -7,7 +7,7 @@ Open-Domain Question Answering 을 수행하는 inference 코드 입니다.
 import os
 import sys
 import logging
-from typing import Callable, Dict, List, NoReturn, Tuple
+from typing import Callable, Dict, List, NoReturn, Optional, Tuple
 
 import evaluate
 import numpy as np
@@ -19,7 +19,7 @@ from datasets import (
     Sequence,
     Value,
 )
-from src.retrieval import SparseRetrieval
+from src.retrieval import SparseRetrieval, BaseRetrieval
 from src.trainer_qa import QuestionAnsweringTrainer
 from transformers import (
     AutoConfig,
@@ -45,6 +45,7 @@ from src.utils import (
 logger = get_logger(__name__, logging.INFO)
 
 
+# TODO: 현재 제출 파일 생성과 관련된 버그 존재함 (오류)
 def main():
     # 가능한 arguments 들은 ./arguments.py 나 transformer package 안의 src/transformers/training_args.py 에서 확인 가능합니다.
     # --help flag 를 실행시켜서 확인할 수 도 있습니다.
@@ -186,7 +187,7 @@ def retrieve_and_build_dataset(
 ) -> DatasetDict:
     """
     Retriever를 사용해 question에 맞는 context를 검색하고 MRC용 데이터셋 생성.
-    
+
     Args:
         retriever: 이미 build()된 retrieval 객체 (외부 주입)
         datasets: 원본 데이터셋 (question, id 포함)
@@ -194,7 +195,7 @@ def retrieve_and_build_dataset(
         include_answers: 의도적으로 answers를 포함할지 여부
                         - True: validation/train (원본에 answers 있으면 유지)
                         - False: test (원본에 answers 없음, 강제 제외)
-    
+
     Returns:
         Retrieved context가 포함된 DatasetDict
     """
@@ -203,7 +204,7 @@ def retrieve_and_build_dataset(
 
     # 2. 실제 DataFrame에 answers 컬럼이 있는지 확인
     has_answers = "answers" in df.columns
-    
+
     # 3. HF Features 정의
     # include_answers=True이고 실제로 answers가 있는 경우에만 포함
     if include_answers and has_answers:
@@ -250,6 +251,8 @@ def run_mrc(
     tokenizer,
     model,
     inference_split: str,
+    retriever: Optional[BaseRetrieval] = None,
+    original_datasets: Optional[DatasetDict] = None,
 ) -> NoReturn:
     # eval 혹은 prediction에서만 사용함
     column_names = datasets["validation"].column_names
@@ -434,142 +437,17 @@ def run_mrc(
             and hasattr(data_args, "compare_retrieval")
             and data_args.compare_retrieval
         ):
-            logger.info("")
-            logger.info("=" * 80)
-            logger.info("🔍 RETRIEVAL COMPARISON MODE")
-            logger.info("=" * 80)
-
-            import json
-            import csv
-            from src.retrieval.sparse import SparseRetrieval
-            from src.utils.evaluator import (
-                FinalEvaluator,
-                save_predictions,
-                save_detailed_results,
+            compare_gold_vs_retrieval(
+                original_datasets=original_datasets,
+                retriever=retriever,
+                trainer=trainer,
+                tokenizer=tokenizer,
+                data_args=data_args,
+                training_args=training_args,
+                prepare_validation_features=prepare_validation_features,
+                column_names=column_names,
+                predictions=predictions,
             )
-
-            # 1. Gold context 예측 (이미 완료)
-            logger.info("1️⃣  Gold context predictions (already done)")
-            gold_pred_dict = {
-                pred["id"]: pred["prediction_text"] for pred in predictions.predictions
-            }
-
-            # 정답 레이블 저장
-            answer_column_name = (
-                "answers" if "answers" in column_names else column_names[2]
-            )
-            val_ref_dict = {
-                ex["id"]: ex[answer_column_name] for ex in datasets["validation"]
-            }
-
-            eval_labels_path = os.path.join(
-                training_args.output_dir, "eval_labels.json"
-            )
-            with open(eval_labels_path, "w", encoding="utf-8") as f:
-                json.dump(val_ref_dict, f, indent=2, ensure_ascii=False)
-            logger.info(f"   ✅ Labels saved: {eval_labels_path}")
-
-            # Gold predictions CSV 저장
-            eval_pred_gold_path = os.path.join(
-                training_args.output_dir, "eval_pred_gold.csv"
-            )
-            with open(eval_pred_gold_path, "w", encoding="utf-8") as f:
-                writer = csv.writer(f, delimiter="\t")
-                for key, value in gold_pred_dict.items():
-                    writer.writerow([key, value])
-            logger.info(f"   ✅ Gold predictions: {eval_pred_gold_path}")
-
-            # 2. Retrieval context 예측
-            logger.info("")
-            logger.info("2️⃣  Running retrieval for validation set...")
-
-            # Retrieval 초기화
-            retriever = SparseRetrieval(
-                tokenize_fn=tokenizer.tokenize,
-                data_path=data_args.data_path
-                if hasattr(data_args, "data_path")
-                else "./data",
-                context_path=data_args.context_path
-                if hasattr(data_args, "context_path")
-                else "wikipedia_documents.json",
-            )
-            retriever.get_sparse_embedding()
-
-            # Retrieval 수행
-            val_questions = datasets["validation"]["question"]
-            if data_args.use_faiss:
-                retrieved_contexts = retriever.retrieve_faiss(
-                    val_questions, topk=data_args.top_k_retrieval
-                )
-            else:
-                retrieved_contexts = retriever.retrieve(
-                    val_questions, topk=data_args.top_k_retrieval
-                )
-
-            # Retrieved context로 새로운 dataset 생성
-            val_with_retrieval = datasets["validation"].map(
-                lambda example, idx: {"context": retrieved_contexts[idx]},
-                with_indices=True,
-                desc="Adding retrieved contexts",
-            )
-
-            # Feature 생성
-            val_retrieval_dataset = val_with_retrieval.map(
-                prepare_validation_features,
-                batched=True,
-                num_proc=data_args.preprocessing_num_workers,
-                remove_columns=column_names,
-                load_from_cache_file=False,
-                desc="Preparing validation features with retrieval",
-            )
-
-            # Retrieval 예측
-            logger.info("   Running predictions with retrieved contexts...")
-            val_retrieval_predictions = trainer.predict(
-                test_dataset=val_retrieval_dataset, test_examples=val_with_retrieval
-            )
-            val_retrieval_pred_dict = {
-                pred["id"]: pred["prediction_text"]
-                for pred in val_retrieval_predictions.predictions
-            }
-
-            # Retrieval predictions CSV 저장
-            eval_pred_retrieval_path = os.path.join(
-                training_args.output_dir, "eval_pred_retrieval.csv"
-            )
-            with open(eval_pred_retrieval_path, "w", encoding="utf-8") as f:
-                writer = csv.writer(f, delimiter="\t")
-                for key, value in val_retrieval_pred_dict.items():
-                    writer.writerow([key, value])
-            logger.info(f"   ✅ Retrieval predictions: {eval_pred_retrieval_path}")
-
-            # 3. 자동 비교 실행
-            logger.info("")
-            logger.info("3️⃣  Comparing gold vs retrieval performance...")
-
-            import subprocess
-
-            comparison_script = "scripts/compare_retrieval.py"
-            if os.path.exists(comparison_script):
-                result = subprocess.run(
-                    [sys.executable, comparison_script, training_args.output_dir],
-                    capture_output=False,
-                )
-                if result.returncode == 0:
-                    logger.info("   ✅ Comparison completed successfully!")
-                else:
-                    logger.warning(
-                        f"   ⚠️  Comparison failed with code {result.returncode}"
-                    )
-            else:
-                logger.warning(
-                    f"   ⚠️  Comparison script not found: {comparison_script}"
-                )
-                logger.info(
-                    f"   💡 Run manually: python {comparison_script} {training_args.output_dir}"
-                )
-
-            logger.info("=" * 80)
         else:
             print(
                 "No metric can be presented because there is no correct answer given. Job done!"
@@ -581,6 +459,169 @@ def run_mrc(
 
         trainer.log_metrics("test", metrics)
         trainer.save_metrics("test", metrics)
+
+
+def compare_gold_vs_retrieval(
+    original_datasets: DatasetDict,
+    retriever: Optional[BaseRetrieval],
+    trainer: QuestionAnsweringTrainer,
+    tokenizer,
+    data_args: DataTrainingArguments,
+    training_args: TrainingArguments,
+    prepare_validation_features: Callable,
+    column_names: List[str],
+    predictions,
+) -> NoReturn:
+    """
+    Validation set에서 gold context vs retrieval context 성능 비교.
+
+    Args:
+        original_datasets: Gold context가 있는 원본 데이터셋 (retrieval 적용 전)
+        retriever: Retrieval 객체 (있으면 재사용, 없으면 새로 생성)
+        trainer: QuestionAnsweringTrainer 인스턴스
+        tokenizer: Tokenizer
+        data_args: DataTrainingArguments
+        training_args: TrainingArguments
+        prepare_validation_features: Feature 전처리 함수
+        column_names: 데이터셋 컬럼명 리스트
+        predictions: Gold context로 이미 수행된 예측 결과
+    """
+    import json
+    import csv
+    from src.retrieval.sparse import SparseRetrieval
+
+    logger.info("")
+    logger.info("=" * 80)
+    logger.info("🔍 RETRIEVAL COMPARISON MODE")
+    logger.info("=" * 80)
+
+    # 1. Gold context 예측 (이미 완료)
+    logger.info("1️⃣  Gold context predictions (already done)")
+    gold_pred_dict = {
+        pred["id"]: pred["prediction_text"] for pred in predictions.predictions
+    }
+
+    # 정답 레이블 저장 (original_datasets 사용)
+    answer_column_name = "answers" if "answers" in column_names else column_names[2]
+    val_ref_dict = {
+        ex["id"]: ex[answer_column_name] for ex in original_datasets["validation"]
+    }
+
+    eval_labels_path = os.path.join(training_args.output_dir, "eval_labels.json")
+    with open(eval_labels_path, "w", encoding="utf-8") as f:
+        json.dump(val_ref_dict, f, indent=2, ensure_ascii=False)
+    logger.info(f"   ✅ Labels saved: {eval_labels_path}")
+
+    # Gold predictions CSV 저장
+    eval_pred_gold_path = os.path.join(training_args.output_dir, "eval_pred_gold.csv")
+    with open(eval_pred_gold_path, "w", encoding="utf-8") as f:
+        writer = csv.writer(f, delimiter="\t")
+        for key, value in gold_pred_dict.items():
+            writer.writerow([key, value])
+    logger.info(f"   ✅ Gold predictions: {eval_pred_gold_path}")
+
+    # 2. Retrieval context 예측
+    logger.info("")
+    logger.info("2️⃣  Running retrieval for validation set...")
+
+    # Retrieval 객체: 전달받았으면 재사용, 없으면 새로 생성
+    if retriever is None:
+        logger.info("   Creating new retriever for comparison...")
+        config_path = (
+            sys.argv[1]
+            if len(sys.argv) == 2 and sys.argv[1].endswith(".yaml")
+            else None
+        )
+        retriever = SparseRetrieval(
+            tokenize_fn=tokenizer.tokenize,
+            config_path=config_path,
+            use_faiss=data_args.use_faiss,
+            num_clusters=data_args.num_clusters,
+        )
+        retriever.build()
+    else:
+        logger.info("   Reusing existing retriever...")
+
+    # Retrieval 수행 (original_datasets 사용 - gold context 보존된 원본)
+    val_questions = original_datasets["validation"]["question"]
+    df_retrieved = retriever.retrieve(
+        original_datasets["validation"], topk=data_args.top_k_retrieval
+    )
+
+    # Retrieved context로 새로운 dataset 생성
+    features = Features(
+        {
+            "id": Value(dtype="string", id=None),
+            "question": Value(dtype="string", id=None),
+            "context": Value(dtype="string", id=None),
+            "answers": Sequence(
+                feature={
+                    "text": Value(dtype="string", id=None),
+                    "answer_start": Value(dtype="int32", id=None),
+                },
+                length=-1,
+                id=None,
+            ),
+        }
+    )
+    val_with_retrieval = Dataset.from_pandas(
+        df_retrieved[["id", "question", "context", "answers"]].reset_index(drop=True),
+        features=features,
+    )
+
+    # Feature 생성
+    val_retrieval_dataset = val_with_retrieval.map(
+        prepare_validation_features,
+        batched=True,
+        num_proc=data_args.preprocessing_num_workers,
+        remove_columns=["id", "question", "context", "answers"],
+        load_from_cache_file=False,
+        desc="Preparing validation features with retrieval",
+    )
+
+    # Retrieval 예측
+    logger.info("   Running predictions with retrieved contexts...")
+    val_retrieval_predictions = trainer.predict(
+        test_dataset=val_retrieval_dataset, test_examples=val_with_retrieval
+    )
+    val_retrieval_pred_dict = {
+        pred["id"]: pred["prediction_text"]
+        for pred in val_retrieval_predictions.predictions
+    }
+
+    # Retrieval predictions CSV 저장
+    eval_pred_retrieval_path = os.path.join(
+        training_args.output_dir, "eval_pred_retrieval.csv"
+    )
+    with open(eval_pred_retrieval_path, "w", encoding="utf-8") as f:
+        writer = csv.writer(f, delimiter="\t")
+        for key, value in val_retrieval_pred_dict.items():
+            writer.writerow([key, value])
+    logger.info(f"   ✅ Retrieval predictions: {eval_pred_retrieval_path}")
+
+    # 3. 자동 비교 실행
+    logger.info("")
+    logger.info("3️⃣  Comparing gold vs retrieval performance...")
+
+    import subprocess
+
+    comparison_script = "scripts/compare_retrieval.py"
+    if os.path.exists(comparison_script):
+        result = subprocess.run(
+            [sys.executable, comparison_script, training_args.output_dir],
+            capture_output=False,
+        )
+        if result.returncode == 0:
+            logger.info("   ✅ Comparison completed successfully!")
+        else:
+            logger.warning(f"   ⚠️  Comparison failed with code {result.returncode}")
+    else:
+        logger.warning(f"   ⚠️  Comparison script not found: {comparison_script}")
+        logger.info(
+            f"   💡 Run manually: python {comparison_script} {training_args.output_dir}"
+        )
+
+    logger.info("=" * 80)
 
 
 if __name__ == "__main__":
