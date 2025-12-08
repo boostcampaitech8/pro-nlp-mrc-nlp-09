@@ -201,25 +201,7 @@ for i, ex in tqdm(enumerate(train_examples), desc="Hard Negative Sampling", tota
         "negatives": negatives
     })
 
-# ========================================================
-# 7-1. 유사도 통계 + 그래프 저장
-# ========================================================
-os.makedirs("./data/plots", exist_ok=True)
-all_sims = np.array(all_sims)
-print("\n=== DPR Similarity Stats ===")
-print("count :", len(all_sims))
-print("mean  :", np.mean(all_sims))
-print("median:", np.median(all_sims))
-print("std   :", np.std(all_sims))
-print("min   :", np.min(all_sims))
-print("max   :", np.max(all_sims))
 
-plt.hist(all_sims, bins=50)
-plt.xlabel("DPR Similarity")
-plt.ylabel("Frequency")
-plt.title("Distribution of DPR Similarity (SentenceTransformer)")
-plt.savefig("./data/plots/sim_distribution.png")
-plt.close()
 
 # ========================================================
 # 8. Arrow Dataset 저장
