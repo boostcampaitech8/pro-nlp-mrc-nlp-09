@@ -104,7 +104,9 @@ def main():
     )
 
     # Config 경로 추출 (YAML 사용 시)
-    config_path = sys.argv[1] if len(sys.argv) == 2 and sys.argv[1].endswith(".yaml") else None
+    config_path = (
+        sys.argv[1] if len(sys.argv) == 2 and sys.argv[1].endswith(".yaml") else None
+    )
 
     # =========================================================================
     # Test/Non-test 분기: 명확한 정책 분리
@@ -136,13 +138,15 @@ def main():
             retriever=None,
             original_datasets=None,
         )
-    
+
     else:
         # VALIDATION/TRAIN 분기: retrieval 선택적, compare 가능
-        logger.info(f"📍 {inference_split.upper()} branch: retrieval optional, gold context available")
+        logger.info(
+            f"📍 {inference_split.upper()} branch: retrieval optional, gold context available"
+        )
         original_datasets = datasets  # compare용 백업 (gold context 보존)
         retriever = None
-        
+
         if data_args.eval_retrieval:
             logger.info("🔍 eval_retrieval=True: running retrieval")
             retriever = SparseRetrieval(
@@ -160,7 +164,7 @@ def main():
             )
         else:
             logger.info("📄 eval_retrieval=False: using gold context")
-        
+
         run_mrc(
             data_args=data_args,
             training_args=training_args,
@@ -172,6 +176,8 @@ def main():
             retriever=retriever,
             original_datasets=original_datasets,
         )
+
+
 def retrieve_and_build_dataset(
     retriever: BaseRetrieval,
     datasets: DatasetDict,
