@@ -10,6 +10,18 @@ from sentence_transformers import SentenceTransformer
 import matplotlib.pyplot as plt
 import re
 
+# ========================================================
+# 숫자 분리 함수
+# ========================================================
+def split_numbers(tokens):
+    new_tokens = []
+    for t in tokens:
+        split_t = re.sub(r'([0-9]+)([가-힣A-Za-z])', r'\1 \2', t)
+        split_t = re.sub(r'([가-힣A-Za-z])([0-9]+)', r'\1 \2', split_t)
+        parts = split_t.split()
+        new_tokens.append(t)
+        new_tokens.extend(parts)
+    return new_tokens
 
 def get_hard_sample(
         data_path,
@@ -75,7 +87,8 @@ def get_hard_sample(
         print("Tokenizing Wikipedia texts with Okt + number split...")
         wiki_corpus_tokens = []
         for text in tqdm(wiki_texts):
-            tokens = okt.morphs(text)
+            base_tokens = okt.morphs(text)
+            tokens = split_numbers(base_tokens)
             wiki_corpus_tokens.append(tokens)
         os.makedirs(os.path.dirname(tokens_cache_path), exist_ok=True)
         with open(tokens_cache_path, "wb") as f:
@@ -130,7 +143,7 @@ def get_hard_sample(
         for ex in tqdm(train_examples, desc="Collect BM25 Candidates"):
             question = ex["question"]
             positive = ex["context"]
-            q_tokens = okt.morphs(question)
+            q_tokens = split_numbers(okt.morphs(question))
             scores = bm25.get_scores(q_tokens)
             bm25_idx = np.argsort(scores)[-bm25_expand:][::-1]
             filtered_ids = [i for i in bm25_idx if wiki_texts[i] != positive]
