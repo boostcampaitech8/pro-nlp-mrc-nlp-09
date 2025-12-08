@@ -3,7 +3,7 @@ import os
 import time
 from abc import ABC, abstractmethod
 from contextlib import contextmanager
-from typing import List, NoReturn, Optional, Tuple, Union
+from typing import Any, Dict, List, NoReturn, Optional, Tuple, Union
 
 import numpy as np
 import pandas as pd
@@ -18,30 +18,90 @@ def timer(name: str):
     print(f"[{name}] done in {time.time() - t0:.3f} s")
 
 
+def load_yaml_config(config_path: str) -> Dict[str, Any]:
+    """
+    YAML 설정 파일 로드 (HfArgumentParser 방식 재사용).
+
+    Args:
+        config_path: .yaml 파일 경로
+
+    Returns:
+        설정 딕셔너리
+
+    Note:
+        transformers.HfArgumentParser가 내부적으로 사용하는 방식과 동일.
+        pyyaml 의존성이 없으면 자동으로 설치 유도.
+    """
+    try:
+        import yaml
+    except ImportError:
+        raise ImportError(
+            "PyYAML is required for config file support. "
+            "Install it with: pip install pyyaml"
+        )
+
+    if not os.path.exists(config_path):
+        raise FileNotFoundError(f"Config file not found: {config_path}")
+
+    with open(config_path, "r", encoding="utf-8") as f:
+        return yaml.safe_load(f)
+
+
 class BaseRetrieval(ABC):
     """
     공통 Retrieval 베이스 클래스.
 
-    - 위키 코퍼스 로딩 (contexts, ids)
+    - 위키 코퍼스 로딩 (contexts, ids, titles)
     - 문자열/데이터셋 입력을 공통으로 처리하는 retrieve()
     - 서브클래스는 build(), get_relevant_doc_bulk()만 구현하면 됨.
+
+    생성 규약:
+        BaseRetrieval(config_path=None, data_path=None, context_path=None, **kwargs)
+
+    우선순위:
+        1) 생성자 인자(data_path, context_path 등 kwargs)
+        2) YAML config 내 retrieval 섹션 (config['retrieval'])
+        3) 코드 내부 default 값
     """
 
     def __init__(
         self,
-        data_path: Optional[str] = "./data",
-        context_path: Optional[str] = "wikipedia_documents.json",
+        config_path: Optional[str] = None,
+        data_path: Optional[str] = None,
+        context_path: Optional[str] = None,
+        **kwargs,
     ) -> NoReturn:
-        self.data_path = data_path
-        self.context_path = context_path
+        # 1. Config 로딩 (있으면)
+        if config_path:
+            self.config = load_yaml_config(config_path)
+            retrieval_config = self.config.get("retrieval", {})
+        else:
+            self.config = {}
+            retrieval_config = {}
 
-        with open(os.path.join(data_path, context_path), "r", encoding="utf-8") as f:
+        # 2. 우선순위 적용: kwargs > config > 기본값
+        #    (Sparse/DenseRetrieval에서 data_path/context_path를 넘겨도 여기서 처리됨)
+        self.data_path = (
+            data_path
+            or kwargs.get("data_path")
+            or retrieval_config.get("data_path", "./data")
+        )
+        self.context_path = (
+            context_path
+            or kwargs.get("context_path")
+            or retrieval_config.get("context_path", "wikipedia_documents.json")
+        )
+
+        # 3. Wikipedia corpus 로드
+        wiki_path = os.path.join(self.data_path, self.context_path)
+        if not os.path.exists(wiki_path):
+            raise FileNotFoundError(f"Wikipedia corpus not found: {wiki_path}")
+
+        with open(wiki_path, "r", encoding="utf-8") as f:
             wiki = json.load(f)
 
-        # context와 document_id, title을 함께 저장
-        # set 은 매번 순서가 바뀌므로 dict 로 유니크한 context만 추출
-        # document_id는 int로 변환 (데이터셋의 document_id가 int 타입)
-        unique_contexts = {}
+        # text 기준 유니크 context 추출 + doc_id(int), title 함께 저장
+        unique_contexts: Dict[str, Dict[str, Any]] = {}
         for doc_id, doc_info in wiki.items():
             text = doc_info["text"]
             if text not in unique_contexts:
@@ -54,10 +114,11 @@ class BaseRetrieval(ABC):
         self.ids = [v["doc_id"] for v in unique_contexts.values()]
         # ⚠️ NOTE: self.ids는 wikipedia_documents.json의 실제 doc_id (int)
         #    단순 인덱스 [0,1,2,...]가 아님! contexts와 1:1 매핑됨
+        # TODO: title을 인덱싱과 MRC 추론에 활용할 수 있을까?
         self.titles = [v["title"] for v in unique_contexts.values()]
-        print(
-            f"[BaseRetrieval] Lengths of unique contexts : {len(self.contexts)}"
-        )  # === 서브클래스에서 구현해야 하는 부분 ===
+        print(f"[BaseRetrieval] Lengths of unique contexts : {len(self.contexts)}")
+
+    # === 서브클래스에서 구현해야 하는 부분 (오버라이딩)===
 
     @abstractmethod
     def build(self) -> NoReturn:
