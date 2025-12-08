@@ -16,3 +16,6 @@ ipykernel
 matplotlib
 seaborn
 ipython
+
+# WandB (실험 추적 & 하이퍼파라미터 튜닝)
+wandb>=0.15.0

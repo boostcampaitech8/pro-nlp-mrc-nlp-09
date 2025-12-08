@@ -227,3 +227,53 @@ install: ## 필요한 패키지 설치
 	@echo "$(BLUE)📦 Installing dependencies...$(NC)"
 	pip install -r requirements.txt
 	@echo "$(GREEN)✅ Installation complete!$(NC)"
+
+##@ WandB Sweep (하이퍼파라미터 튜닝)
+
+sweep-create: ## WandB Sweep 생성 (SWEEP_CONFIG, PROJECT 필수)
+ifndef SWEEP_CONFIG
+	@echo "$(RED)❌ Error: SWEEP_CONFIG 변수가 필요합니다$(NC)"
+	@echo "$(YELLOW)Usage: make sweep-create SWEEP_CONFIG=configs/sweep_config.yaml PROJECT=mrc-sweep$(NC)"
+	@exit 1
+endif
+ifndef PROJECT
+	@echo "$(RED)❌ Error: PROJECT 변수가 필요합니다$(NC)"
+	@echo "$(YELLOW)Usage: make sweep-create SWEEP_CONFIG=configs/sweep_config.yaml PROJECT=mrc-sweep$(NC)"
+	@exit 1
+endif
+	@echo "$(BLUE)🔧 Creating WandB Sweep...$(NC)"
+	$(PYTHON) run_sweep.py --create --config $(SWEEP_CONFIG) --project $(PROJECT)
+
+sweep-run: ## WandB Sweep Agent 실행 (SWEEP_ID 필수, COUNT 선택)
+ifndef SWEEP_ID
+	@echo "$(RED)❌ Error: SWEEP_ID 변수가 필요합니다$(NC)"
+	@echo "$(YELLOW)Usage: make sweep-run SWEEP_ID=abc123 COUNT=10$(NC)"
+	@exit 1
+endif
+	@echo "$(BLUE)🚀 Starting WandB Sweep Agent...$(NC)"
+ifdef COUNT
+	$(PYTHON) run_sweep.py --sweep_id $(SWEEP_ID) --count $(COUNT)
+else
+	$(PYTHON) run_sweep.py --sweep_id $(SWEEP_ID)
+endif
+
+sweep-quick: ## Sweep 생성 + 즉시 실행 (SWEEP_CONFIG, PROJECT, COUNT 필수)
+ifndef SWEEP_CONFIG
+	@echo "$(RED)❌ Error: SWEEP_CONFIG 변수가 필요합니다$(NC)"
+	@echo "$(YELLOW)Usage: make sweep-quick SWEEP_CONFIG=configs/sweep_config.yaml PROJECT=mrc-sweep COUNT=10$(NC)"
+	@exit 1
+endif
+ifndef PROJECT
+	@echo "$(RED)❌ Error: PROJECT 변수가 필요합니다$(NC)"
+	@exit 1
+endif
+ifndef COUNT
+	@echo "$(RED)❌ Error: COUNT 변수가 필요합니다$(NC)"
+	@exit 1
+endif
+	@echo "$(BLUE)🔧 Creating and running WandB Sweep...$(NC)"
+	$(PYTHON) run_sweep.py --create --run --config $(SWEEP_CONFIG) --project $(PROJECT) --count $(COUNT)
+
+wandb-login: ## WandB 로그인
+	@echo "$(BLUE)🔐 Logging in to WandB...$(NC)"
+	wandb login
