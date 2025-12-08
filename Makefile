@@ -7,7 +7,7 @@
 PYTHON := python
 ACTIVE_DIR := configs/active
 OUTPUT_DIR := ./outputs
-USER := dahyeong
+USER := junbeom
 # USER 변수: 사용자 이름 (필요시 변경)
 
 # 색상 출력
