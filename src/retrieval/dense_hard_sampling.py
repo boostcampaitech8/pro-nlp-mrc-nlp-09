@@ -19,18 +19,6 @@ import re
 # TODO : 시간나면 토크나이저 이슈 고민
 # 모델 토크나이저 임베딩 토크나이저, train과 모델 통일 고민
 
-# ========================================================
-# 숫자 분리 함수
-# ========================================================
-def split_numbers(tokens):
-    new_tokens = []
-    for t in tokens:
-        split_t = re.sub(r'([0-9]+)([가-힣A-Za-z])', r'\1 \2', t)
-        split_t = re.sub(r'([가-힣A-Za-z])([0-9]+)', r'\1 \2', split_t)
-        parts = split_t.split()
-        new_tokens.append(t)
-        new_tokens.extend(parts)
-    return new_tokens
 
 # ========================================================
 # 1. 모델 로드
@@ -89,8 +77,7 @@ else:
     print("Tokenizing Wikipedia texts with Okt + number split...")
     wiki_corpus_tokens = []
     for text in tqdm(wiki_texts):
-        base_tokens = okt.morphs(text)
-        tokens = split_numbers(base_tokens)
+        tokens = okt.morphs(text)
         wiki_corpus_tokens.append(tokens)
     os.makedirs(os.path.dirname(tokens_cache_path), exist_ok=True)
     with open(tokens_cache_path, "wb") as f:
@@ -145,7 +132,7 @@ else:
     for ex in tqdm(train_examples, desc="Collect BM25 Candidates"):
         question = ex["question"]
         positive = ex["context"]
-        q_tokens = split_numbers(okt.morphs(question))
+        q_tokens = okt.morphs(question)
         scores = bm25.get_scores(q_tokens)
         bm25_idx = np.argsort(scores)[-bm25_expand:][::-1]
         filtered_ids = [i for i in bm25_idx if wiki_texts[i] != positive]
