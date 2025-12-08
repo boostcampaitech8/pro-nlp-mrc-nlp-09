@@ -8,7 +8,7 @@
 ##################################
 # --- model (ModelArguments) ---
 ##################################
-model_name_or_path: klue/bert-base  # 사전학습 모델 또는 checkpoint 경로
+model_name_or_path: klue/bert-base # 사전학습 모델 또는 checkpoint 경로
 # config_name: null         # 모델과 동일하면 생략 가능
 # tokenizer_name: null      # 모델과 동일하면 생략 가능
 
