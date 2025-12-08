@@ -8,6 +8,7 @@ PYTHON := python
 ACTIVE_DIR := configs/active
 OUTPUT_DIR := ./outputs
 USER := dahyeong
+# USER 변수: 사용자 이름 (필요시 변경)
 
 # 색상 출력
 BLUE := \033[0;34m
@@ -171,30 +172,22 @@ compare-results: ## 실험 결과 비교 (F1/EM 점수)
 			f1=$$($(PYTHON) -c "import json; print(json.load(open('$$dir/eval_results.json')).get('eval_f1', 'N/A'))" 2>/dev/null || echo "N/A"); \
 			em=$$($(PYTHON) -c "import json; print(json.load(open('$$dir/eval_results.json')).get('eval_exact_match', 'N/A'))" 2>/dev/null || echo "N/A"); \
 			printf "  %-50s F1: %-8s EM: %-8s\n" "$$exp_name" "$$f1" "$$em"; \
-		fi \
+		fi; \
 	done
+	@echo ""
 
-show-best: ## 가장 높은 F1 점수를 가진 실험 출력
-	@echo "$(BLUE)🏆 Best experiment (by F1 score):$(NC)"
-	@best_f1=0; best_exp=""; \
-	for dir in $(OUTPUT_DIR)/$(USER)/*/; do \
+show-best: ## 가장 높은 EM 점수 기준 Top 5 실험 출력
+	@echo "$(BLUE)🏆 Top 5 experiments (by EM score):$(NC)"
+	@echo ""
+	@for dir in $(OUTPUT_DIR)/$(USER)/*/; do \
 		if [ -f "$$dir/eval_results.json" ]; then \
 			exp_name=$$(basename $$dir); \
-			f1=$$($(PYTHON) -c "import json; f1=json.load(open('$$dir/eval_results.json')).get('eval_f1', 0); print(f1 if f1 else 0)" 2>/dev/null || echo "0"); \
-			if [ "$$($(PYTHON) -c "print(1 if $$f1 > $$best_f1 else 0)")" = "1" ]; then \
-				best_f1=$$f1; \
-				best_exp=$$exp_name; \
-				best_dir=$$dir; \
-			fi \
+			f1=$$($(PYTHON) -c "import json; print(json.load(open('$$dir/eval_results.json')).get('eval_f1', 0))" 2>/dev/null || echo "0"); \
+			em=$$($(PYTHON) -c "import json; print(json.load(open('$$dir/eval_results.json')).get('eval_exact_match', 0))" 2>/dev/null || echo "0"); \
+			printf "%s|%s|%s\n" "$$em" "$$f1" "$$exp_name"; \
 		fi \
-	done; \
-	if [ -n "$$best_exp" ]; then \
-		echo "  $(GREEN)Experiment: $$best_exp$(NC)"; \
-		echo "  F1 Score: $$best_f1"; \
-		echo "  Path: $$best_dir"; \
-	else \
-		echo "  $(YELLOW)No evaluation results found$(NC)"; \
-	fi
+	done | sort -t'|' -k1 -nr | head -5 | awk -F'|' '{printf "  $(GREEN)%-50s$(NC) EM: %-8s F1: %-8s\n", $$3, $$1, $$2}'
+	@echo ""
 
 compare-retrieval: ## Retrieval 성능 비교 결과 출력 (EXP 필수)
 	@if [ -z "$(EXP)" ]; then \
