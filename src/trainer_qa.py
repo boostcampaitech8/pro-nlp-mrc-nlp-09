@@ -65,7 +65,13 @@ class QuestionAnsweringTrainer(Trainer):
             eval_preds = self.post_process_function(
                 eval_examples, eval_dataset, output.predictions, self.args
             )
+
             metrics = self.compute_metrics(eval_preds)
+            if metrics:
+                metrics = {
+                    (f"eval_{k}" if not k.startswith("eval_") else k): v
+                    for k, v in metrics.items()
+                }
 
             self.log(metrics)
         else:
