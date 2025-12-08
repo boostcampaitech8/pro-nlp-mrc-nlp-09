@@ -8,9 +8,9 @@ from typing import List, NoReturn, Optional, Union
 
 from transformers import AutoTokenizer, AutoModel
 
-from retrieval.hard_sampling import get_hard_sample
-from retrieval.dpr_train import dpr_train
-from retrieval.dense_embedding import dense_embedding
+from dense_hard_sampling import get_hard_sample
+from dense_train import dpr_train
+from dense_embed import dense_embedding
 from datasets import Dataset
 
 class DenseRetrieval:
@@ -20,8 +20,8 @@ class DenseRetrieval:
         reranker_model: str = "sentence-transformers/xlm-r-100langs-bert-base-nli-stsb-mean-tokens",
         hard_sample_k: int = 5,
         dpr_model: str = "snumin44/biencoder-ko-bert-question",
-        dpr_model_output_dir: str = "./outputs/minseok/",
-        data_path: str = "./data/",
+        dpr_model_output_dir: str = "./outputs/minseok",
+        data_path: str = "./data",
         context_path: str = "./data/wikipedia_documents.json",
         device: Optional[str] = "cuda",
     ) -> NoReturn:
@@ -36,8 +36,7 @@ class DenseRetrieval:
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
 
         # 하드샘플 및 DPR 체크포인트 경로
-        self.hard_sample_path = os.path.join(self.data_path, "negative")
-        self.dpr_ckpt_path = os.path.join(self.dpr_model_output_dir, "question_encoder")
+        self.hard_sample_path = os.path.join(self.data_path, "train_dataset","negative")
 
         # Dense embedding 경로
         self.embeddings_path = os.path.join(self.data_path, "embeddings/context_embeddings.npy")
@@ -58,17 +57,17 @@ class DenseRetrieval:
         if not os.path.exists(self.hard_sample_path):
             print(">>> Hard samples missing. Generating...")
             get_hard_sample(
-                bm25_candidate=self.bm25_candidate,
-                reranker_model=self.reranker_model,
-                hard_sample_k=self.hard_sample_k,
                 data_path=self.data_path,
-                context_path=self.context_path
+                context_path=self.context_path,
+                reranker_model=self.reranker_model,
+                bm25_candidate=self.bm25_candidate,
+                hard_sample_k=self.hard_sample_k
             )
         else:
             print("Hard samples OK.")
 
     def _ensure_dpr_checkpoint(self):
-        if not os.path.exists(self.dpr_ckpt_path):
+        if not os.path.exists(os.path.join(self.dpr_model_output_dir, "question_encoder")):
             print(">>> DPR checkpoint missing. Training...")
             dpr_train(
                 model_name=self.dpr_model,
@@ -85,8 +84,7 @@ class DenseRetrieval:
                 model_path=self.dpr_model_output_dir,
                 context_path=self.context_path,
                 embeddings_output_path=self.embeddings_path,
-                metadata_output_path=self.metadata_path,
-                wiki_texts_output_path=self.wiki_texts_path
+                metadata_output_path=self.metadata_path
             )
         else:
             print("Dense embeddings OK.")
@@ -106,8 +104,8 @@ class DenseRetrieval:
         # 2) DPR 모델 로드 (최초 1회)
         if self.encoder is None:
             print("Loading DPR encoder...")
-            self.encoder = AutoModel.from_pretrained(self.dpr_model_output_dir).to(self.device)
-            self.tokenizer = AutoTokenizer.from_pretrained(self.dpr_model_output_dir)
+            self.encoder = AutoModel.from_pretrained(os.path.join(self.dpr_model_output_dir, "question_encoder")).to(self.device)
+            self.tokenizer = AutoTokenizer.from_pretrained(os.path.join(self.dpr_model_output_dir, "question_encoder"))
             self.encoder.eval()
 
         # 3) Context embeddings 및 메타데이터 로드 (최초 1회)
