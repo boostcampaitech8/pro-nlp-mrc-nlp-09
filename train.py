@@ -7,7 +7,6 @@ import numpy as np
 import torch
 import evaluate
 from typing import NoReturn
-from train_process import normalize_text, safe_normalize, apply_clean
 from src.arguments import DataTrainingArguments, ModelArguments, CustomTrainingArguments
 from datasets import DatasetDict, load_from_disk
 from src.trainer_qa import QuestionAnsweringTrainer
@@ -27,7 +26,8 @@ from src.utils import (
     postprocess_qa_predictions,
     wait_for_gpu_availability,
     get_config, to_serializable, print_section,
-    get_logger
+    get_logger,
+    TextPreprocessor
 )
 
 seed = 2024
@@ -101,6 +101,27 @@ def main():
 
     datasets = load_from_disk(data_args.train_dataset_name)
     logger.info("load datasets: \n", datasets)
+    
+    # Apply text preprocessing if requested
+    if data_args.apply_cleaning:
+        logger.info("🔧 Applying text normalization to datasets...")
+        preprocessor = TextPreprocessor(apply_cleaning=True)
+        
+        if "train" in datasets:
+            datasets["train"] = datasets["train"].map(
+                preprocessor.preprocess_example,
+                num_proc=data_args.preprocessing_num_workers,
+                desc="Cleaning train dataset"
+            )
+        
+        if "validation" in datasets:
+            datasets["validation"] = datasets["validation"].map(
+                preprocessor.preprocess_example,
+                num_proc=data_args.preprocessing_num_workers,
+                desc="Cleaning validation dataset"
+            )
+        
+        logger.info("✅ Text normalization completed")
 
     # AutoConfig를 이용하여 pretrained model 과 tokenizer를 불러옵니다.
     # argument로 원하는 모델 이름을 설정하면 옵션을 바꿀 수 있습니다.
@@ -258,21 +279,6 @@ def run_mrc(
         if "train" not in datasets:
             raise ValueError("--do_train requires a train dataset")
         train_dataset = datasets["train"]
-    
-        # ==============================================
-        # ⭐ Cleaning 적용 (context/question 정규화)
-        # ==============================================
-        if data_args.apply_cleaning:
-            logger.info("🔧 Applying text normalization to TRAIN dataset...")
-            train_dataset = train_dataset.map(
-                lambda x: {
-                    **x,
-                    "context": safe_normalize(x["context"]),
-                    "question": safe_normalize(x["question"]),
-                },
-                num_proc=data_args.preprocessing_num_workers,
-                desc="Cleaning train dataset"
-            )
 
         # dataset에서 train feature를 생성합니다.
         train_dataset = train_dataset.map(
@@ -323,17 +329,6 @@ def run_mrc(
         return tokenized_examples
 
     eval_dataset = datasets["validation"]
-    if data_args.apply_cleaning:
-        logger.info("🔧 Applying text normalization to VALIDATION dataset...")
-        eval_dataset = eval_dataset.map(
-            lambda x: {
-                **x,
-                "context": safe_normalize(x["context"]),
-                "question": safe_normalize(x["question"]),
-            },
-            num_proc=data_args.preprocessing_num_workers,
-            desc="Cleaning validation dataset"
-        )
     # Validation Feature 생성
     eval_dataset = eval_dataset.map(
         prepare_validation_features,
