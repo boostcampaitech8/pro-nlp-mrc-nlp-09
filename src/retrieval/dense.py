@@ -82,7 +82,7 @@ class DenseRetrieval:
             print(">>> Dense embeddings missing. Building...")
             dense_embedding(
                 model_path=self.dpr_model_output_dir,
-                context_path=self.context_path,
+                wiki_path=self.wiki_texts_path,
                 embeddings_output_path=self.embeddings_path,
                 metadata_output_path=self.metadata_path
             )

@@ -7,7 +7,7 @@ from transformers import AutoTokenizer, AutoModel, get_linear_schedule_with_warm
 from torch.optim import AdamW 
 import torch.nn.functional as F
 
-def dense_embedding(model_name, output_dir, hard_sample_path):
+def dpr_train(model_name, output_dir, hard_sample_path):
     # ============================
     # Config
     # ============================

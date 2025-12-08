@@ -1,12 +1,13 @@
 import os
 import json
+import pickle
 import numpy as np
 from tqdm import tqdm
 import torch
 from transformers import AutoTokenizer, AutoModel
 import torch.nn.functional as F
 
-def dpr_train(model_path, context_path, embeddings_output_path, metadata_output_path):
+def dense_embedding(model_path, wiki_path, embeddings_output_path, metadata_output_path):
     # ======================================================
     # 설정
     # ======================================================
@@ -14,7 +15,7 @@ def dpr_train(model_path, context_path, embeddings_output_path, metadata_output_
     MODEL_PATH = os.path.join(model_path, "context_encoder")
     EMB_CACHE_PATH = embeddings_output_path
     CHUNK_META_PATH = metadata_output_path
-    WIKI_PATH = context_path
+    WIKI_PATH = wiki_path
 
     MAX_LENGTH = 512
     STRIDE = 256
@@ -28,18 +29,19 @@ def dpr_train(model_path, context_path, embeddings_output_path, metadata_output_
     # ======================================================
     # 위키 문서 불러오기 + Dedup
     # ======================================================
-    with open(WIKI_PATH, "r", encoding="utf-8") as f:
-        raw_wiki = json.load(f)
-
-    seen = set()
-    wiki_texts = []
-    for k, v in raw_wiki.items():
-        text = v["text"].strip()
-        sig = text[:200]  # 상위 200자 기준 중복 제거
-        if sig not in seen:
-            seen.add(sig)
-            wiki_texts.append(text)
-
+    if os.path.exists(WIKI_PATH):
+        print("Loading deduplicated wiki texts from hardsampling cache...")
+        with open(WIKI_PATH, "rb") as f:
+            cached = pickle.load(f)
+            wiki_texts = cached["wiki_texts"]
+            wiki_ids = cached["wiki_ids"]  # 추가: metadata용
+        print(f"Loaded {len(wiki_texts)} deduplicated passages from cache")
+    else:
+        raise FileNotFoundError(
+            f"hardsampling dedup cache not found: {WIKI_PATH}\n"
+            f"Run dense_hard_sampling.py first!"
+        )
+    
     print(f"[After dedup] wiki passages: {len(wiki_texts)}")
 
     # ======================================================
