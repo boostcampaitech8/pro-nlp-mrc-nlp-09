@@ -101,6 +101,13 @@ class DataTrainingArguments:
     )
     use_faiss: bool = field(
         default=False, metadata={"help": "Whether to build with faiss"}
+        
+    )
+    apply_cleaning: bool = field(
+        default=False,
+        metadata={
+            "help": "Apply safe text normalization to train/validation datasets (HTML 제거, 공백 정규화 등)"
+        },
     )
 
 

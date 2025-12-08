@@ -4,12 +4,13 @@ import sys
 import numpy as np
 import torch
 import evaluate
+import re
 from typing import NoReturn
 from collections import defaultdict
 
-from arguments import DataTrainingArguments, ModelArguments
+from src.arguments import DataTrainingArguments, ModelArguments
 from datasets import DatasetDict, load_from_disk
-from trainer_qa import QuestionAnsweringTrainer
+from src.trainer_qa import QuestionAnsweringTrainer
 from transformers import (
     AutoConfig,
     AutoModelForQuestionAnswering,
@@ -20,7 +21,7 @@ from transformers import (
     TrainingArguments,
     set_seed,
 )
-from utils_qa import check_no_error, postprocess_qa_predictions
+from src.utils import check_no_error, postprocess_qa_predictions
 
 
 logger = logging.getLogger(__name__)
@@ -29,7 +30,30 @@ logger = logging.getLogger(__name__)
 # ============================================================================
 # EDA 기반 추가 함수들
 # ============================================================================
+def normalize_text(text: str) -> str:
+    text = text.replace("\n", " ")
+    text = " ".join(text.split())
+    return text
 
+def safe_normalize(text: str):
+    if not isinstance(text, str):
+        return text
+    text = re.sub(r"<[^>]+>", " ", text)
+    text = re.sub(r"\[\d+\]", " ", text)
+    text = re.sub(r"[●★■◆▼▲…]", " ", text)
+    text = re.sub(r"\s+", " ", text)
+    return text.strip()
+
+
+def apply_clean(example):
+    return {
+        "context": safe_normalize(example["context"]),
+        "question": safe_normalize(example["question"]),
+        "answers": example["answers"]
+    }
+
+
+    
 def remove_duplicates(dataset):
     """
     EDA 결과: 832개 중복 인덱스 발견

@@ -7,7 +7,7 @@ import numpy as np
 import torch
 import evaluate
 from typing import NoReturn
-
+from train_process import normalize_text, safe_normalize, apply_clean
 from src.arguments import DataTrainingArguments, ModelArguments, CustomTrainingArguments
 from datasets import DatasetDict, load_from_disk
 from src.trainer_qa import QuestionAnsweringTrainer
@@ -132,7 +132,7 @@ def main():
         f"model type: {type(model)}"
     )
 
-    run_mrc(data_args, training_args, model_args, datasets, tokenizer, model)
+    run_mrc(data_args, training_args, model_args, datasets, tokenizer, model,config)
 
 
 def run_mrc(
@@ -142,6 +142,7 @@ def run_mrc(
     datasets: DatasetDict,
     tokenizer,
     model,
+    config,
 ) -> NoReturn:
 
     # dataset을 전처리합니다.
@@ -257,6 +258,21 @@ def run_mrc(
         if "train" not in datasets:
             raise ValueError("--do_train requires a train dataset")
         train_dataset = datasets["train"]
+    
+        # ==============================================
+        # ⭐ Cleaning 적용 (context/question 정규화)
+        # ==============================================
+        if data_args.apply_cleaning:
+            logger.info("🔧 Applying text normalization to TRAIN dataset...")
+            train_dataset = train_dataset.map(
+                lambda x: {
+                    **x,
+                    "context": safe_normalize(x["context"]),
+                    "question": safe_normalize(x["question"]),
+                },
+                num_proc=data_args.preprocessing_num_workers,
+                desc="Cleaning train dataset"
+            )
 
         # dataset에서 train feature를 생성합니다.
         train_dataset = train_dataset.map(
@@ -307,7 +323,17 @@ def run_mrc(
         return tokenized_examples
 
     eval_dataset = datasets["validation"]
-
+    if data_args.apply_cleaning:
+        logger.info("🔧 Applying text normalization to VALIDATION dataset...")
+        eval_dataset = eval_dataset.map(
+            lambda x: {
+                **x,
+                "context": safe_normalize(x["context"]),
+                "question": safe_normalize(x["question"]),
+            },
+            num_proc=data_args.preprocessing_num_workers,
+            desc="Cleaning validation dataset"
+        )
     # Validation Feature 생성
     eval_dataset = eval_dataset.map(
         prepare_validation_features,
