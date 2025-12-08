@@ -8,6 +8,7 @@ evaluate==0.4.6
 
 # faiss install (if you want to)
 # faiss-gpu
+faiss-gpu-cu12
 
 # 사용자 추가 패키지 (재현과 무관)
 pyyaml>=6.0
