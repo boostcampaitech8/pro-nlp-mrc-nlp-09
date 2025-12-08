@@ -22,9 +22,10 @@ class TextPreprocessor:
         """
         기본 텍스트 정규화: 줄바꿈 제거 및 공백 정규화
         
-        Note: 이 메서드는 가벼운 정규화가 필요한 경우를 위해 제공됩니다.
-        기본적으로 preprocess_example은 safe_normalize를 사용하여 
-        더 강력한 정규화를 수행합니다.
+        사용 가이드:
+        - normalize_text(): 가벼운 정규화 (줄바꿈 및 공백만 처리)
+        - safe_normalize(): 강력한 정규화 (HTML, 특수문자, 참조번호 제거)
+        - preprocess_example(): 데이터셋 예제에 safe_normalize 자동 적용
         
         Args:
             text: 정규화할 텍스트
