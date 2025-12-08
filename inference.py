@@ -103,65 +103,111 @@ def main():
         config=config,
     )
 
-    # True일 경우 : run passage retrieval
-    if data_args.eval_retrieval:
-        datasets = run_sparse_retrieval(
-            tokenizer.tokenize,
-            datasets,
-            training_args,
-            data_args,
-        )
+    # Config 경로 추출 (YAML 사용 시)
+    config_path = sys.argv[1] if len(sys.argv) == 2 and sys.argv[1].endswith(".yaml") else None
 
-    # eval or predict mrc model
-    if training_args.do_eval or training_args.do_predict:
+    # =========================================================================
+    # Test/Non-test 분기: 명확한 정책 분리
+    # =========================================================================
+    if inference_split == "test":
+        # TEST 분기: retrieval 필수, compare 불가
+        logger.info("📍 TEST branch: retrieval required, no gold context")
+        retriever = SparseRetrieval(
+            tokenize_fn=tokenizer.tokenize,
+            config_path=config_path,
+            use_faiss=data_args.use_faiss,
+            num_clusters=data_args.num_clusters,
+        )
+        retriever.build()
+        datasets = retrieve_and_build_dataset(
+            retriever=retriever,
+            datasets=datasets,
+            data_args=data_args,
+            include_answers=False,
+        )
         run_mrc(
-            data_args,
-            training_args,
-            model_args,
-            datasets,
-            tokenizer,
-            model,
-            inference_split,
+            data_args=data_args,
+            training_args=training_args,
+            model_args=model_args,
+            datasets=datasets,
+            tokenizer=tokenizer,
+            model=model,
+            inference_split=inference_split,
+            retriever=None,
+            original_datasets=None,
         )
-
-
-def run_sparse_retrieval(
-    tokenize_fn: Callable[[str], List[str]],
-    datasets: DatasetDict,
-    training_args: TrainingArguments,
-    data_args: DataTrainingArguments,
-    data_path: str = "./data",
-    context_path: str = "wikipedia_documents.json",
-) -> DatasetDict:
-    # Query에 맞는 Passage들을 Retrieval 합니다.
-    retriever = SparseRetrieval(
-        tokenize_fn=tokenize_fn, data_path=data_path, context_path=context_path
-    )
-    retriever.get_sparse_embedding()
-
-    if data_args.use_faiss:
-        retriever.build_faiss(num_clusters=data_args.num_clusters)
-        df = retriever.retrieve_faiss(
-            datasets["validation"], topk=data_args.top_k_retrieval
-        )
+    
     else:
-        df = retriever.retrieve(datasets["validation"], topk=data_args.top_k_retrieval)
+        # VALIDATION/TRAIN 분기: retrieval 선택적, compare 가능
+        logger.info(f"📍 {inference_split.upper()} branch: retrieval optional, gold context available")
+        original_datasets = datasets  # compare용 백업 (gold context 보존)
+        retriever = None
+        
+        if data_args.eval_retrieval:
+            logger.info("🔍 eval_retrieval=True: running retrieval")
+            retriever = SparseRetrieval(
+                tokenize_fn=tokenizer.tokenize,
+                config_path=config_path,
+                use_faiss=data_args.use_faiss,
+                num_clusters=data_args.num_clusters,
+            )
+            retriever.build()
+            datasets = retrieve_and_build_dataset(
+                retriever=retriever,
+                datasets=datasets,
+                data_args=data_args,
+                include_answers=True,
+            )
+        else:
+            logger.info("📄 eval_retrieval=False: using gold context")
+        
+        run_mrc(
+            data_args=data_args,
+            training_args=training_args,
+            model_args=model_args,
+            datasets=datasets,
+            tokenizer=tokenizer,
+            model=model,
+            inference_split=inference_split,
+            retriever=retriever,
+            original_datasets=original_datasets,
+        )
+def retrieve_and_build_dataset(
+    retriever: BaseRetrieval,
+    datasets: DatasetDict,
+    data_args: DataTrainingArguments,
+    include_answers: bool,
+) -> DatasetDict:
+    """
+    Retriever를 사용해 question에 맞는 context를 검색하고 MRC용 데이터셋 생성.
+    
+    Args:
+        retriever: 이미 build()된 retrieval 객체 (외부 주입)
+        datasets: 원본 데이터셋 (question, id 포함)
+        data_args: top_k_retrieval 등 설정
+        include_answers: 의도적으로 answers를 포함할지 여부
+                        - True: validation/train (원본에 answers 있으면 유지)
+                        - False: test (원본에 answers 없음, 강제 제외)
+    
+    Returns:
+        Retrieved context가 포함된 DatasetDict
+    """
+    # 1. Retrieval 수행
+    df = retriever.retrieve(datasets["validation"], topk=data_args.top_k_retrieval)
 
-    # TODO: do_predict / do_eval 둘다 사용하는 경우 고려할 것
-    # test data 에 대해선 정답이 없으므로 id question context 로만 데이터셋이 구성됩니다.
-    if training_args.do_predict:
-        f = Features(
+    # 2. 실제 DataFrame에 answers 컬럼이 있는지 확인
+    has_answers = "answers" in df.columns
+    
+    # 3. HF Features 정의
+    # include_answers=True이고 실제로 answers가 있는 경우에만 포함
+    if include_answers and has_answers:
+        # Validation/Train: answers 포함
+        used_columns = ["id", "question", "context", "answers"]
+        features = Features(
             {
-                "context": Value(dtype="string", id=None),
                 "id": Value(dtype="string", id=None),
                 "question": Value(dtype="string", id=None),
-            }
-        )
-
-    # train data 에 대해선 정답이 존재하므로 id question context answer 로 데이터셋이 구성됩니다.
-    elif training_args.do_eval:
-        f = Features(
-            {
+                "context": Value(dtype="string", id=None),
                 "answers": Sequence(
                     feature={
                         "text": Value(dtype="string", id=None),
@@ -170,13 +216,24 @@ def run_sparse_retrieval(
                     length=-1,
                     id=None,
                 ),
-                "context": Value(dtype="string", id=None),
-                "id": Value(dtype="string", id=None),
-                "question": Value(dtype="string", id=None),
             }
         )
-    datasets = DatasetDict({"validation": Dataset.from_pandas(df, features=f)})
-    return datasets
+    else:
+        # Test 또는 answers 없는 경우: id, question, context만
+        used_columns = ["id", "question", "context"]
+        features = Features(
+            {
+                "id": Value(dtype="string", id=None),
+                "question": Value(dtype="string", id=None),
+                "context": Value(dtype="string", id=None),
+            }
+        )
+
+    # 4. 필요한 컬럼만 남기고 HF Dataset으로 변환
+    df = df[used_columns].reset_index(drop=True)
+    new_dataset = Dataset.from_pandas(df, features=features)
+
+    return DatasetDict({"validation": new_dataset})
 
 
 def run_mrc(
