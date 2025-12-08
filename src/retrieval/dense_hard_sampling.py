@@ -15,6 +15,10 @@ from sentence_transformers import SentenceTransformer
 import matplotlib.pyplot as plt
 import re
 
+
+# TODO : 시간나면 토크나이저 이슈 고민
+# 모델 토크나이저 임베딩 토크나이저, train과 모델 통일 고민
+
 # ========================================================
 # 숫자 분리 함수
 # ========================================================
