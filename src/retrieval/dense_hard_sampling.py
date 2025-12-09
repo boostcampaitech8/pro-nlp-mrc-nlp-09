@@ -164,8 +164,8 @@ def get_hard_sample(
     # 7. Hard Negative Sampling
     # ========================================================
     top_k = hard_sample_k
-    sim_low = 0.3
-    sim_high = 0.55
+    sim_low = 0.28
+    sim_high = 0.45
     negative_samples = []
     all_sims = []
 
@@ -200,6 +200,25 @@ def get_hard_sample(
         })
 
 
+    # ========================================================
+    # 7-1. 유사도 통계 + 그래프 저장
+    # ========================================================
+    os.makedirs("./data/plots", exist_ok=True)
+    all_sims = np.array(all_sims)
+    print("\n=== DPR Similarity Stats ===")
+    print("count :", len(all_sims))
+    print("mean  :", np.mean(all_sims))
+    print("median:", np.median(all_sims))
+    print("std   :", np.std(all_sims))
+    print("min   :", np.min(all_sims))
+    print("max   :", np.max(all_sims))
+
+    plt.hist(all_sims, bins=50)
+    plt.xlabel("DPR Similarity")
+    plt.ylabel("Frequency")
+    plt.title("Distribution of DPR Similarity (SentenceTransformer)")
+    plt.savefig("./data/plots/sim_distribution.png")
+    plt.close()
 
     # ========================================================
     # 8. Arrow Dataset 저장

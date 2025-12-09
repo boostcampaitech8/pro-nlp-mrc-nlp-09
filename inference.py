@@ -145,7 +145,7 @@ def run_dense_retrieval(
         )
     else:
         #df = retriever.retrieve(datasets["validation"], topk=data_args.top_k_retrieval)
-        df = retriever.retrieve(datasets["validation"], topk=10)
+        df = retriever.retrieve(datasets["validation"], topk=5)
 
     # TODO: do_predict / do_eval 둘다 사용하는 경우 고려할 것
     # test data 에 대해선 정답이 없으므로 id question context 로만 데이터셋이 구성됩니다.

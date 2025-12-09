@@ -18,7 +18,7 @@ def dense_embedding(model_path, wiki_path, embeddings_output_path, metadata_outp
     WIKI_PATH = wiki_path
 
     MAX_LENGTH = 512
-    STRIDE = 256
+    STRIDE = 128
 
     # ======================================================
     # 모델/토크나이저 로드

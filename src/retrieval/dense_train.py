@@ -16,7 +16,7 @@ def dpr_train(model_name, output_dir, hard_sample_path):
     MAX_LEN = 512
     LR = 3e-5
     EPOCHS = 2
-    TEMPERATURE = 0.05
+    TEMPERATURE = 0.2
     DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
     # ============================
@@ -54,7 +54,7 @@ def dpr_train(model_name, output_dir, hard_sample_path):
         return F.normalize(emb, p=2, dim=1)
 
     def dpr_loss(q_vec, p_pos_vec, neg_embeds, neg_counts):
-        pos_sim = F.cosine_similarity(q_vec, p_pos_vec, dim=-1) / TEMPERATURE
+        pos_sim = F.cosine_similarity(q_vec, p_pos_vec, dim=-1)
         max_count = max(neg_counts) if len(neg_counts) > 0 else 0
         neg_sims = torch.full((q_vec.size(0), max_count), -1e9, device=DEVICE)
 

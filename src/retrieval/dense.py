@@ -17,8 +17,8 @@ class DenseRetrieval:
     def __init__(
         self,
         bm25_candidate: int = 200,
-        reranker_model: str = "sentence-transformers/xlm-r-100langs-bert-base-nli-stsb-mean-tokens",
-        hard_sample_k: int = 5,
+        reranker_model: str = "snumin44/biencoder-ko-bert-question",
+        hard_sample_k: int = 8,
         dpr_model: str = "snumin44/biencoder-ko-bert-question",
         dpr_model_output_dir: str = "./outputs/minseok",
         data_path: str = "./data",
