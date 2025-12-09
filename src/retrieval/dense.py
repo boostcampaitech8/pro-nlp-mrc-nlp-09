@@ -8,9 +8,9 @@ from typing import List, NoReturn, Optional, Union
 
 from transformers import AutoTokenizer, AutoModel
 
-from dense_hard_sampling import get_hard_sample
-from dense_train import dpr_train
-from dense_embed import dense_embedding
+from src.retrieval.dense_hard_sampling import get_hard_sample
+from src.retrieval.dense_train import dpr_train
+from src.retrieval.dense_embed import dense_embedding
 from datasets import Dataset
 
 class DenseRetrieval:
