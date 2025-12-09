@@ -150,7 +150,7 @@ def get_hard_sample(
     print(f"Positive: {test_scores2[0]:.4f}")
     for i, score in enumerate(test_scores2[1:], 1):
         print(f"Candidate {i}: {score:.4f}")
-
+    '''
     # ========================================================
     # 6. Cross-Encoder Rerank (GPU float32)
     # ========================================================
@@ -184,7 +184,7 @@ def get_hard_sample(
             "positive": positive,
             "negatives": negatives
         })
-    '''
+    
 
     # ========================================================
     # 7. 통계 및 저장
