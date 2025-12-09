@@ -16,9 +16,9 @@ from datasets import Dataset
 class DenseRetrieval:
     def __init__(
         self,
-        bm25_candidate: int = 200,
+        bm25_candidate: int = 500,
         reranker_model: str = "snumin44/biencoder-ko-bert-question",
-        hard_sample_k: int = 8,
+        hard_sample_k: int = 5,
         dpr_model: str = "snumin44/biencoder-ko-bert-question",
         dpr_model_output_dir: str = "./outputs/minseok",
         data_path: str = "./data",

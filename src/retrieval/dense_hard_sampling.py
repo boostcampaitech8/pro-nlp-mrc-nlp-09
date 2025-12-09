@@ -164,8 +164,8 @@ def get_hard_sample(
     # 7. Hard Negative Sampling
     # ========================================================
     top_k = hard_sample_k
-    sim_low = 0.28
-    sim_high = 0.45
+    sim_low = 0.5
+    sim_high = 0.65
     negative_samples = []
     all_sims = []
 
@@ -185,10 +185,14 @@ def get_hard_sample(
         all_sims.extend(sims.tolist())
 
         hard_idx = [i for i, s in enumerate(sims) if sim_low <= s <= sim_high]
+        '''
+        #fallback
         if len(hard_idx) < top_k:
             extra = np.argsort(sims)[-top_k:][::-1]
             extra = [i for i in extra if i not in hard_idx]
             hard_idx += extra[: top_k - len(hard_idx)]
+        '''
+        
 
         chosen = sorted(hard_idx, key=lambda i: sims[i], reverse=True)[:top_k]
         negatives = [cand_texts[i] for i in chosen]
@@ -219,6 +223,19 @@ def get_hard_sample(
     plt.title("Distribution of DPR Similarity (SentenceTransformer)")
     plt.savefig("./data/plots/sim_distribution.png")
     plt.close()
+
+    # ========================================================
+    # 7-2. Negative sample 평균 갯수 출력
+    # ========================================================
+    neg_counts = [len(ex["negatives"]) for ex in negative_samples]
+    avg_neg_count = np.mean(neg_counts)
+    min_neg_count = np.min(neg_counts)
+    max_neg_count = np.max(neg_counts)
+
+    print("\n=== Negative Sample Stats per Question ===")
+    print("min negatives per question :", min_neg_count)
+    print("max negatives per question :", max_neg_count)
+    print("avg negatives per question :", avg_neg_count)
 
     # ========================================================
     # 8. Arrow Dataset 저장
