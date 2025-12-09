@@ -17,7 +17,7 @@ from datasets import (
     Sequence,
     Value,
 )
-from src.retrieval import SparseRetrieval
+from src.retrieval import DenseRetrieval
 from src.trainer_qa import QuestionAnsweringTrainer
 from transformers import (
     AutoConfig,
@@ -103,8 +103,7 @@ def main():
 
     # True일 경우 : run passage retrieval
     if data_args.eval_retrieval:
-        datasets = run_sparse_retrieval(
-            tokenizer.tokenize,
+        datasets = run_dense_retrieval(
             datasets,
             training_args,
             data_args,
@@ -123,19 +122,21 @@ def main():
         )
 
 
-def run_sparse_retrieval(
-    tokenize_fn: Callable[[str], List[str]],
+def run_dense_retrieval(
     datasets: DatasetDict,
     training_args: TrainingArguments,
     data_args: DataTrainingArguments,
     data_path: str = "./data",
-    context_path: str = "wikipedia_documents.json",
+    context_path: str = "./data/wikipedia_documents.json",
+    dpr_model_output_dir: str = "./outputs/minseok",
 ) -> DatasetDict:
     # Query에 맞는 Passage들을 Retrieval 합니다.
-    retriever = SparseRetrieval(
-        tokenize_fn=tokenize_fn, data_path=data_path, context_path=context_path
+    retriever = DenseRetrieval(
+        dpr_model_output_dir=dpr_model_output_dir,
+        data_path=data_path,
+        context_path=context_path
     )
-    retriever.get_sparse_embedding()
+    #retriever.get_sparse_embedding()
 
     if data_args.use_faiss:
         retriever.build_faiss(num_clusters=data_args.num_clusters)
@@ -143,7 +144,8 @@ def run_sparse_retrieval(
             datasets["validation"], topk=data_args.top_k_retrieval
         )
     else:
-        df = retriever.retrieve(datasets["validation"], topk=data_args.top_k_retrieval)
+        #df = retriever.retrieve(datasets["validation"], topk=data_args.top_k_retrieval)
+        df = retriever.retrieve(datasets["validation"], topk=10)
 
     # TODO: do_predict / do_eval 둘다 사용하는 경우 고려할 것
     # test data 에 대해선 정답이 없으므로 id question context 로만 데이터셋이 구성됩니다.
