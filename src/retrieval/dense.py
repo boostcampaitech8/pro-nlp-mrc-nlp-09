@@ -16,8 +16,9 @@ from datasets import Dataset
 class DenseRetrieval:
     def __init__(
         self,
-        bm25_candidate: int = 500,
-        reranker_model: str = "snumin44/biencoder-ko-bert-question",
+        candidate: int = 200,
+        reranker_model_bi: str = "snumin44/biencoder-ko-bert-question",
+        reranker_model_cross: str = "Dongjin-kr/ko-reranker",
         hard_sample_k: int = 5,
         dpr_model: str = "snumin44/biencoder-ko-bert-question",
         dpr_model_output_dir: str = "./outputs/minseok",
@@ -26,8 +27,9 @@ class DenseRetrieval:
         device: Optional[str] = "cuda",
     ) -> NoReturn:
         
-        self.bm25_candidate = bm25_candidate
-        self.reranker_model = reranker_model
+        self.candidate = candidate
+        self.reranker_model_bi = reranker_model_bi
+        self.reranker_model_cross = reranker_model_cross
         self.hard_sample_k = hard_sample_k
         self.dpr_model = dpr_model
         self.dpr_model_output_dir = dpr_model_output_dir
@@ -59,8 +61,9 @@ class DenseRetrieval:
             get_hard_sample(
                 data_path=self.data_path,
                 context_path=self.context_path,
-                reranker_model=self.reranker_model,
-                bm25_candidate=self.bm25_candidate,
+                bi_encoder_model=self.reranker_model_bi,
+                cross_encoder_model=self.reranker_model_cross,
+                candidate=self.candidate,
                 hard_sample_k=self.hard_sample_k
             )
         else:
