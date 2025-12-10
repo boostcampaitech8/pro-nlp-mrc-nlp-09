@@ -1,6 +1,6 @@
 # 임베딩 파일 형식 및 Answer Offset 전략
 
-> **작성일**: 2024-12-10  
+> **작성일**: 2025-12-10  
 > **목적**: ODQA 파이프라인에서 임베딩 파일 관리 및 Answer Offset 처리 전략 문서화
 
 ---
@@ -281,7 +281,108 @@ python -m src.retrieval.paths --status
 
 ---
 
-## 6. 문제 해결 체크리스트
+## 6. Sanity Check & 데이터 검증
+
+### 6.1 임베딩 파일 검증
+
+```python
+import numpy as np
+import json
+
+# Embedding 로드 및 검증
+emb = np.load('data/embeddings/kure_corpus_emb.npy')
+print(f'Shape: {emb.shape}')  # (56737, 1024)
+print(f'dtype: {emb.dtype}')  # float32
+
+# L2 Norm 체크 (정규화됨 = 1.0이어야 함)
+norms = np.linalg.norm(emb, axis=1)
+print(f'L2 Norm: mean={norms.mean():.6f}')  # 1.000000
+
+# Passages Meta 로드
+passages = []
+with open('data/embeddings/kure_passages_meta.jsonl', 'r') as f:
+    for line in f:
+        passages.append(json.loads(line.strip()))
+
+# 일치 확인
+assert len(passages) == emb.shape[0], "Embedding과 Meta 개수 불일치!"
+```
+
+**검증 결과 (2025-12-10)**:
+| 항목 | 값 |
+|------|------|
+| Embedding Shape | (56737, 1024) |
+| dtype | float32 |
+| 파일 크기 | 221.6 MB |
+| L2 Norm | 1.000000 (정규화 완료) |
+| Passages 수 | 56,737 (일치) |
+
+### 6.2 캐시 파일 검증
+
+```python
+import json
+
+# 캐시 로드
+cache = []
+with open('data/cache/retrieval/train_top50.jsonl', 'r') as f:
+    for line in f:
+        cache.append(json.loads(line.strip()))
+
+print(f'총 질문 수: {len(cache)}')  # 3952
+
+# 항목 구조 확인
+first = cache[0]
+print(f"id: {first['id']}")
+print(f"question: {first['question'][:50]}...")
+print(f"retrieved: {len(first['retrieved'])} candidates")
+
+# 후보 구조
+cand = first['retrieved'][0]
+# {'passage_id': 14489, 'doc_id': 18293, 'score_dense': 0.534, 'score_bm25': 14.93}
+```
+
+**검증 결과**:
+| Split | 질문 수 | 후보/질문 |
+|-------|---------|----------|
+| train | 3,952 | 50 |
+| val | 240 | 50 |
+| test | 600 | 50 |
+
+**Score 분포**:
+| Score | Min | Max | Mean |
+|-------|-----|-----|------|
+| BM25 | 2.34 | 48.78 | 7.96 |
+| Dense | 0.20 | 0.81 | 0.45 |
+
+### 6.3 Retrieval 품질 검증 (Recall@k)
+
+Validation set 기준 Recall@k 측정 결과:
+
+#### 초기 탐색
+
+| Alpha | R@1 | R@5 | R@10 | R@20 | R@50 |
+|-------|-----|-----|------|------|------|
+| 0.5 | 61.3% | 88.8% | 93.3% | 96.2% | 97.5% |
+| 0.7 | 59.2% | 86.7% | 91.2% | 95.8% | 97.5% |
+| 1.0 (BM25 only) | 55.0% | 81.2% | 89.6% | 92.9% | 97.5% |
+
+#### 세밀한 탐색 (최종, doc_id 매핑 수정 후)
+
+| Alpha | R@1 | R@5 | R@10 | R@20 | R@50 |
+|-------|-----|-----|------|------|------|
+| 0.30 | 61.7% | 90.0% | 93.3% | 96.7% | 97.9% |
+| **0.35** | **62.5%** | **90.4%** | **94.2%** | **96.7%** | 97.9% |
+| 0.40 | 62.5% | 89.6% | 93.8% | 96.7% | 97.9% |
+| 0.50 | 61.7% | 89.2% | 93.8% | 96.7% | 97.9% |
+| 0.70 | 59.6% | 87.1% | 91.7% | 96.2% | 97.9% |
+
+**권장 설정**: `alpha=0.35` (BM25 35% + KURE 65%), R@10=94.2%
+
+> **참고**: Alpha는 캐시 재생성 없이 변경 가능 (raw score 저장)
+
+---
+
+## 7. 문제 해결 체크리스트
 
 ### Answer가 CLS로만 나오는 경우
 
@@ -316,14 +417,15 @@ python -m src.retrieval.paths --status
 
 ---
 
-## 7. 요약
+## 8. 요약
 
 | 구분 | 설명 |
 |------|------|
 | **Positive context** | 항상 원본 gold context 사용 (answer_start 정확) |
 | **Negative context** | Retrieval passage 사용 (BM25/KURE hard negatives) |
-| **임베딩 형식** | `.npy` (L2 정규화됨) |
+| **임베딩 형식** | `.npy` (L2 정규화됨, float32) |
 | **메타데이터** | `.jsonl` (passage_id, doc_id, text 등) |
 | **경로 관리** | `src/retrieval/paths.py` 중앙 집중 |
+| **권장 Alpha** | 0.35 (BM25 35% + KURE 65%), R@10=94.2% |
 
 **핵심 원칙**: Reader는 임베딩 로직을 몰라도 됨. **텍스트 + 정확한 answer_start만 있으면 OK.**
