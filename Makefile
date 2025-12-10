@@ -95,7 +95,7 @@ endif
 	@echo "$(BLUE)🔍 Running test inference with retrieval$(NC)"
 	$(PYTHON) run.py --mode inference --config $(CONFIG)
 
-batch: ## configs/active/*.yaml 모두 순차 실행 (train-pipeline)
+batch: ## configs/active/*.yaml 모두 순차 실행 (train-pipeline + 개별 분석 + 종합 리포트)
 	@echo "$(BLUE)🚀 Starting batch mode with all configs in $(ACTIVE_DIR)/$(NC)"
 	@if [ -z "$$(ls -A $(ACTIVE_DIR)/*.yaml 2>/dev/null)" ]; then \
 		echo "$(RED)❌ Error: $(ACTIVE_DIR)/ 폴더에 YAML 파일이 없습니다$(NC)"; \
@@ -113,8 +113,25 @@ batch: ## configs/active/*.yaml 모두 순차 실행 (train-pipeline)
 		echo "$(GREEN)━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━$(NC)"; \
 		$(MAKE) train-pipeline CONFIG=$$config || echo "$(RED)❌ Failed: $$config$(NC)"; \
 		echo ""; \
+		echo "$(YELLOW)📊 Running analysis for this experiment...$(NC)"; \
+		exp_name=$$(basename $$config .yaml); \
+		exp_dir=$(OUTPUT_DIR)/$(USER)/$$exp_name; \
+		if [ -d "$$exp_dir" ] && [ -f "$$exp_dir/eval_results.json" ]; then \
+			echo "   ✓ Experiment output found: $$exp_dir"; \
+			$(PYTHON) -c "import json; data=json.load(open('$$exp_dir/eval_results.json')); print(f\"   ✓ EM: {data.get('eval_exact_match', 'N/A'):.2f}% | F1: {data.get('eval_f1', 'N/A'):.2f}%\")"; \
+		else \
+			echo "   $(YELLOW)⚠️  No results found (training may have failed)$(NC)"; \
+		fi; \
+		echo ""; \
 	done; \
-	echo "$(GREEN)✅ Batch processing completed: $$count configs$(NC)"
+	echo "$(GREEN)━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━$(NC)"; \
+	echo "$(GREEN)✅ Batch processing completed: $$count configs$(NC)"; \
+	echo "$(GREEN)━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━$(NC)"; \
+	echo ""; \
+	echo "$(BLUE)📊 Generating comprehensive analysis report...$(NC)"; \
+	$(PYTHON) scripts/analyze_batch_results.py $(USER) || echo "$(YELLOW)⚠️  Analysis script failed$(NC)"; \
+	echo ""; \
+	echo "$(GREEN)🎉 All done! Check ./logs/ for detailed reports$(NC)"
 
 ##@ 설정 관리
 
@@ -163,6 +180,11 @@ check-active: ## configs/active/ 모든 설정 파일 유효성 검증
 
 ##@ 결과 분석
 
+analyze-batch: ## Batch 실험 결과 종합 분석 및 리포트 생성
+	@echo "$(BLUE)📊 Analyzing all batch training results...$(NC)"
+	@$(PYTHON) scripts/analyze_batch_results.py $(USER)
+	@echo "$(GREEN)✅ Analysis complete! Check ./logs/ for reports$(NC)"
+
 compare-results: ## 실험 결과 비교 (F1/EM 점수)
 	@echo "$(BLUE)📊 Comparing experiment results:$(NC)"
 	@echo ""
@@ -203,6 +225,109 @@ compare-retrieval: ## Retrieval 성능 비교 결과 출력 (EXP 필수)
 	fi
 	@echo "$(BLUE)📊 Comparing retrieval performance for: $(EXP)$(NC)"
 	@$(PYTHON) scripts/compare_retrieval.py "$$exp_dir"
+
+##@ 앙상블
+
+# 헤테로 앙상블 기본 설정
+ENSEMBLE_OUTPUT := ./outputs/ensemble
+SHARED_OUTPUTS := /data/ephemeral/home/shared/outputs/dahyeong
+
+hetero-ensemble: ## 이종 모델 앙상블 실행 (MODELS, WEIGHTS 필수)
+ifndef MODELS
+	@echo "$(RED)❌ Error: MODELS 변수가 필요합니다$(NC)"
+	@echo "$(YELLOW)Usage: make hetero-ensemble MODELS=\"model1 model2\" WEIGHTS=\"0.6 0.4\"$(NC)"
+	@echo ""
+	@echo "Example:"
+	@echo "  make hetero-ensemble \\"
+	@echo "    MODELS=\"roberta_large_vanilla koelectra kobigbird\" \\"
+	@echo "    WEIGHTS=\"0.5 0.3 0.2\""
+	@exit 1
+endif
+ifndef WEIGHTS
+	@echo "$(RED)❌ Error: WEIGHTS 변수가 필요합니다$(NC)"
+	@exit 1
+endif
+	@echo "$(BLUE)🔀 Running Heterogeneous Ensemble$(NC)"
+	@output_dirs=""; \
+	for model in $(MODELS); do \
+		output_dirs="$$output_dirs $(SHARED_OUTPUTS)/$$model"; \
+	done; \
+	$(PYTHON) scripts/hetero_ensemble.py \
+		--output_dirs $$output_dirs \
+		--weights $(WEIGHTS) \
+		--output_path $(ENSEMBLE_OUTPUT)/hetero_pred.json \
+		--eval_file ./data/train_dataset/validation \
+		--save_details
+	@echo "$(GREEN)✅ Ensemble complete! Output: $(ENSEMBLE_OUTPUT)/$(NC)"
+
+hetero-ensemble-em: ## EM 점수 기반 자동 가중치 앙상블 (MODELS 필수)
+ifndef MODELS
+	@echo "$(RED)❌ Error: MODELS 변수가 필요합니다$(NC)"
+	@echo "$(YELLOW)Usage: make hetero-ensemble-em MODELS=\"model1 model2 model3\"$(NC)"
+	@exit 1
+endif
+	@echo "$(BLUE)🔀 Running EM-weighted Heterogeneous Ensemble$(NC)"
+	@$(PYTHON) scripts/hetero_ensemble.py \
+		--output_dirs $(foreach m,$(MODELS),$(SHARED_OUTPUTS)/$(m)) \
+		--auto_weight_by_em \
+		--output_path $(ENSEMBLE_OUTPUT)/hetero_em_weighted.json \
+		--eval_file ./data/train_dataset/validation \
+		--save_details
+	@echo "$(GREEN)✅ Ensemble complete! Output: $(ENSEMBLE_OUTPUT)/$(NC)"
+
+hetero-ensemble-test: ## Test set 앙상블 제출용 (MODELS, WEIGHTS 필수)
+ifndef MODELS
+	@echo "$(RED)❌ Error: MODELS 변수가 필요합니다$(NC)"
+	@exit 1
+endif
+ifndef WEIGHTS
+	@echo "$(RED)❌ Error: WEIGHTS 변수가 필요합니다$(NC)"
+	@exit 1
+endif
+	@echo "$(BLUE)🔀 Running Heterogeneous Ensemble for TEST submission$(NC)"
+	@output_dirs=""; \
+	for model in $(MODELS); do \
+		output_dirs="$$output_dirs $(SHARED_OUTPUTS)/$$model"; \
+	done; \
+	$(PYTHON) scripts/hetero_ensemble.py \
+		--output_dirs $$output_dirs \
+		--weights $(WEIGHTS) \
+		--output_path $(ENSEMBLE_OUTPUT)/test_submission.json \
+		--save_details
+	@echo "$(GREEN)✅ Test submission ready: $(ENSEMBLE_OUTPUT)/test_submission_submit.csv$(NC)"
+
+grid-search: ## Grid Search로 최적 앙상블 가중치 탐색 (MODELS 옵션)
+	@echo "$(BLUE)🔍 Running Grid Search for optimal weights$(NC)"
+ifdef MODELS
+	@$(PYTHON) scripts/grid_search_weights.py --models $(MODELS) --step 0.1
+else
+	@$(PYTHON) scripts/grid_search_weights.py --step 0.1
+endif
+
+grid-search-fine: ## 더 정밀한 Grid Search (step=0.05)
+	@echo "$(BLUE)🔍 Running Fine Grid Search (step=0.05)$(NC)"
+ifdef MODELS
+	@$(PYTHON) scripts/grid_search_weights.py --models $(MODELS) --step 0.05
+else
+	@$(PYTHON) scripts/grid_search_weights.py --step 0.05
+endif
+
+list-models: ## 앙상블 가능한 모델 목록 및 EM 점수 출력
+	@echo "$(BLUE)📋 Available models for ensemble:$(NC)"
+	@echo ""
+	@$(PYTHON) -c "import json; from pathlib import Path; base=Path('$(SHARED_OUTPUTS)'); models=[(d.name, json.load(open(d/'eval_results.json')).get('eval_exact_match',0)) for d in base.iterdir() if d.is_dir() and (d/'eval_results.json').exists() and (d/'nbest_predictions.json').exists()]; models.sort(key=lambda x:-x[1]); print('모델명'.ljust(40)+' | Val EM | Test nbest'); print('-'*65); [print(f\"{n.ljust(40)} | {e:.2f}%  | {'✅' if (base/n/'nbest_predictions_test.json').exists() else '❌'}\") for n,e in models]; print(); print('💡 ✅=Test 앙상블 가능, ❌=Val만 가능')"
+
+auto-search: ## 최적 앙상블 조합 자동 탐색 (Val 기준)
+	@$(PYTHON) scripts/auto_ensemble.py --mode search --top-n 15
+
+auto-search-test: ## Test nbest 있는 모델만으로 최적 조합 탐색
+	@$(PYTHON) scripts/auto_ensemble.py --mode search --test-only --top-n 15
+
+auto-ensemble: ## 자동으로 최적 조합 찾아서 Val 앙상블 실행
+	@$(PYTHON) scripts/auto_ensemble.py --mode run
+
+auto-ensemble-test: ## 자동으로 최적 조합 찾아서 Test 앙상블 실행 (제출용)
+	@$(PYTHON) scripts/auto_ensemble.py --mode run --test-only
 
 ##@ 유틸리티
 

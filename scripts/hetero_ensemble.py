@@ -374,12 +374,13 @@ def save_predictions(
         output_dir = os.path.dirname(output_path) or "."
     else:
         output_dir = output_path
-    
+
     os.makedirs(output_dir, exist_ok=True)
 
     # 순서가 지정된 경우 OrderedDict 사용
     if ordered_ids:
         from collections import OrderedDict
+
         ordered_preds = OrderedDict()
         for qid in ordered_ids:
             if qid in predictions:
@@ -416,16 +417,18 @@ def save_predictions(
             # all_scores에서 추가 후보들도 포함
             if "all_scores" in detail:
                 for norm_text, score in list(detail["all_scores"].items())[1:5]:
-                    nbest_format[qid].append({
-                        "text": norm_text,  # 정규화된 텍스트
-                        "probability": score,
-                        "normalized": norm_text,
-                    })
-        
+                    nbest_format[qid].append(
+                        {
+                            "text": norm_text,  # 정규화된 텍스트
+                            "probability": score,
+                            "normalized": norm_text,
+                        }
+                    )
+
         with open(nbest_path, "w", encoding="utf-8") as f:
             json.dump(nbest_format, f, ensure_ascii=False, indent=2)
         logger.info(f"💾 nbest_predictions.json saved: {nbest_path}")
-        
+
         # 상세 정보도 별도 저장
         details_path = os.path.join(output_dir, "ensemble_details.json")
         with open(details_path, "w", encoding="utf-8") as f:
