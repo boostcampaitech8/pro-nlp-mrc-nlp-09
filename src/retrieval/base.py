@@ -154,7 +154,7 @@ class BaseRetrieval(ABC):
         return scores[0], indices[0]
 
     def retrieve(
-        self, query_or_dataset: Union[str, Dataset], topk: int = 1
+        self, query_or_dataset: Union[str, Dataset], topk: int = 1, tokenizer=None
     ) -> Union[Tuple[List, List], pd.DataFrame]:
         """
         공통 retrieval 인터페이스:
@@ -196,12 +196,21 @@ class BaseRetrieval(ABC):
             for idx, example in enumerate(
                 tqdm(query_or_dataset, desc=f"{self.__class__.__name__} retrieval: ")
             ):
+                # Context 구성 (Title 포함 여부 결정)
+                context_parts = []
+                for pid in doc_indices[idx]:
+                    context_text = self.contexts[pid]
+                    if tokenizer:
+                        # Title + SEP + Context
+                        title_text = self.titles[pid]
+                        context_parts.append(f"{title_text} {tokenizer.sep_token} {context_text}")
+                    else:
+                        context_parts.append(context_text)
+
                 tmp = {
                     "question": example["question"],
                     "id": example["id"],
-                    "context": " ".join(
-                        [self.contexts[pid] for pid in doc_indices[idx]]
-                    ),
+                    "context": " ".join(context_parts),
                 }
                 # validation/train처럼 정답이 있는 경우
                 if "context" in example.keys() and "answers" in example.keys():

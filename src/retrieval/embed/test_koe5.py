@@ -6,17 +6,32 @@ Usage:
 """
 
 import json
+import os
+import sys
 import numpy as np
 from sentence_transformers import SentenceTransformer
+
+# 프로젝트 루트를 path에 추가
+PROJECT_ROOT = os.path.dirname(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+)
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
+
+from src.retrieval.paths import get_path
 
 
 def test_koe5_retrieval(
     query: str = "대통령을 포함한 미국의 행정부 견제권을 갖는 국가 기관은?",
-    corpus_emb_path: str = "./data/koe5_corpus_emb.npy",
-    wiki_path: str = "./data/wikipedia_documents.json",
+    corpus_emb_path: str = None,  # None이면 paths.py 기본값 사용
+    wiki_path: str = None,  # None이면 paths.py 기본값 사용
     topk: int = 5,
 ):
     """KoE5 retrieval 간단 테스트"""
+
+    # 기본 경로 설정
+    corpus_emb_path = corpus_emb_path or get_path("koe5_corpus_emb")
+    wiki_path = wiki_path or get_path("wiki_corpus")
 
     print("=" * 80)
     print("KoE5 Retrieval Test")
@@ -77,10 +92,16 @@ if __name__ == "__main__":
         default="대통령을 포함한 미국의 행정부 견제권을 갖는 국가 기관은?",
     )
     parser.add_argument(
-        "--corpus_emb_path", type=str, default="./data/koe5_corpus_emb.npy"
+        "--corpus_emb_path",
+        type=str,
+        default=None,  # None이면 paths.py 기본값 사용
+        help="Corpus embedding path (default: from paths.py)",
     )
     parser.add_argument(
-        "--wiki_path", type=str, default="./data/wikipedia_documents.json"
+        "--wiki_path",
+        type=str,
+        default=None,  # None이면 paths.py 기본값 사용
+        help="Wikipedia JSON path (default: from paths.py)",
     )
     parser.add_argument("--topk", type=int, default=5)
 

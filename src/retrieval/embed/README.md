@@ -1,5 +1,6 @@
 # KoE5 Dense Retrieval Implementation
 
+<!-- TODO: 현재 koE5 쓰지 않음 이 문서는 삭제 예정 -->
 ## 📁 파일 구조
 
 ```

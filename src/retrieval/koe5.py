@@ -1,11 +1,11 @@
-"""
-KoE5 기반 Dense Retrieval
+"""KoE5 기반 Dense Retrieval
 
 Usage:
     from src.retrieval.koe5 import KoE5Retrieval
+    from src.retrieval.paths import get_path
 
     retriever = KoE5Retrieval(
-        corpus_emb_path="./data/koe5_corpus_emb.npy"
+        corpus_emb_path=get_path("koe5_corpus_emb")
     )
     retriever.build()
     df = retriever.retrieve(dataset, topk=20)
@@ -18,6 +18,10 @@ import numpy as np
 from sentence_transformers import SentenceTransformer
 
 from .base import BaseRetrieval, timer
+from .paths import get_path
+
+# 기본 경로 상수 (paths.py에서 관리)
+DEFAULT_CORPUS_EMB_PATH = get_path("koe5_corpus_emb")
 
 
 class KoE5Retrieval(BaseRetrieval):
@@ -33,7 +37,7 @@ class KoE5Retrieval(BaseRetrieval):
         self,
         data_path: str = "./data",
         context_path: str = "wikipedia_documents.json",
-        corpus_emb_path: str = "./data/koe5_corpus_emb.npy",
+        corpus_emb_path: Optional[str] = None,  # None이면 기본 경로 사용
         model_name: str = "nlpai-lab/KoE5",
         batch_size: int = 128,
         config_path: Optional[str] = None,
@@ -55,7 +59,8 @@ class KoE5Retrieval(BaseRetrieval):
             **kwargs,
         )
 
-        self.corpus_emb_path = corpus_emb_path
+        # 경로 설정 (None이면 기본 경로 사용)
+        self.corpus_emb_path = corpus_emb_path or DEFAULT_CORPUS_EMB_PATH
         self.model_name = model_name
         self.batch_size = batch_size
 

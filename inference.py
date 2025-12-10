@@ -19,7 +19,7 @@ from datasets import (
     Sequence,
     Value,
 )
-from src.retrieval import SparseRetrieval, BaseRetrieval
+from src.retrieval import get_retriever, BaseRetrieval
 from src.trainer_qa import QuestionAnsweringTrainer
 from transformers import (
     AutoConfig,
@@ -41,8 +41,147 @@ from src.utils import (
     get_model_path,
     load_inference_dataset,
 )
+from src.utils.retrieval_utils import retrieve_and_build_dataset
+from src.retrieval.paths import get_path
 
 logger = get_logger(__name__, logging.INFO)
+
+
+def load_retrieval_from_cache(
+    cache_path: str,
+    dataset: Dataset,
+    data_args: DataTrainingArguments,
+    alpha: float = 0.35,
+) -> Dataset:
+    """
+    캐시된 retrieval 결과를 로드하여 Dataset을 구성합니다.
+
+    Args:
+        cache_path: retrieval cache JSONL 경로
+        dataset: 원본 dataset (question, answers 등 포함)
+        data_args: DataTrainingArguments
+        alpha: hybrid score 계산용 BM25 가중치
+
+    Returns:
+        context가 retrieval 결과로 대체된 Dataset
+    """
+    import json
+    import numpy as np
+
+    # 캐시 로드
+    cache = {}
+    with open(cache_path, "r", encoding="utf-8") as f:
+        for line in f:
+            item = json.loads(line.strip())
+            cache[item["id"]] = item
+
+    # Passages corpus 로드 (캐시된 passage_id로 텍스트 조회)
+    passages_meta_path = get_path("kure_passages_meta")
+    wiki_path = get_path("wiki_corpus")
+
+    if os.path.exists(passages_meta_path):
+        passage_texts = []
+        with open(passages_meta_path, "r", encoding="utf-8") as f:
+            for line in f:
+                meta = json.loads(line.strip())
+                passage_texts.append(meta["text"])
+    else:
+        # Fallback: wiki corpus 사용
+        with open(wiki_path, "r", encoding="utf-8") as f:
+            wiki = json.load(f)
+        # 중복 제거 후 순서 유지
+        unique_texts = {}
+        for doc_id, doc_info in wiki.items():
+            text = doc_info["text"]
+            if text not in unique_texts:
+                unique_texts[text] = text
+        passage_texts = list(unique_texts.keys())
+
+    # 결과 구성
+    result_data = {
+        "id": [],
+        "question": [],
+        "context": [],
+        "answers": [] if "answers" in dataset.column_names else None,
+    }
+
+    top_k = data_args.top_k_retrieval
+
+    for example in dataset:
+        qid = example["id"]
+        cache_entry = cache.get(qid)
+
+        if cache_entry is None:
+            logger.warning(f"⚠️  Cache miss for question {qid}, using empty context")
+            context = ""
+        else:
+            # Hybrid score 계산 및 정렬
+            candidates = cache_entry["retrieved"]
+
+            if candidates:
+                bm25_scores = np.array([c["score_bm25"] for c in candidates])
+                dense_scores = np.array([c["score_dense"] for c in candidates])
+
+                # Per-query min-max 정규화
+                eps = 1e-9
+                bm25_n = (bm25_scores - bm25_scores.min()) / (
+                    bm25_scores.max() - bm25_scores.min() + eps
+                )
+                dense_n = (dense_scores - dense_scores.min()) / (
+                    dense_scores.max() - dense_scores.min() + eps
+                )
+
+                # Hybrid score
+                hybrid_scores = alpha * bm25_n + (1 - alpha) * dense_n
+
+                # 정렬 및 top-k 선택
+                sorted_indices = np.argsort(hybrid_scores)[::-1][:top_k]
+
+                # Context 구성 (top-k passage concatenation)
+                contexts = []
+                for idx in sorted_indices:
+                    passage_id = candidates[idx]["passage_id"]
+                    if passage_id < len(passage_texts):
+                        contexts.append(passage_texts[passage_id])
+
+                context = " ".join(contexts)
+            else:
+                context = ""
+
+        result_data["id"].append(qid)
+        result_data["question"].append(example["question"])
+        result_data["context"].append(context)
+        if result_data["answers"] is not None:
+            result_data["answers"].append(
+                example.get("answers", {"text": [], "answer_start": []})
+            )
+
+    # Dataset 생성
+    if result_data["answers"] is not None:
+        features = Features(
+            {
+                "id": Value(dtype="string"),
+                "question": Value(dtype="string"),
+                "context": Value(dtype="string"),
+                "answers": Sequence(
+                    feature={
+                        "text": Value(dtype="string"),
+                        "answer_start": Value(dtype="int32"),
+                    }
+                ),
+            }
+        )
+    else:
+        features = Features(
+            {
+                "id": Value(dtype="string"),
+                "question": Value(dtype="string"),
+                "context": Value(dtype="string"),
+            }
+        )
+        del result_data["answers"]
+
+    return Dataset.from_dict(result_data, features=features)
 
 
 # TODO: 현재 제출 파일 생성과 관련된 버그 존재함 (오류)
@@ -59,9 +198,10 @@ def main():
     model_args, data_args, training_args = get_config(parser)
 
     # inference_split에 따라 do_eval/do_predict 자동 설정
+    # 정책: validation/train은 do_eval만, test는 do_predict만
     inference_split = data_args.inference_split
     if inference_split == "test":
-        # test: 정답이 없으므로 predict만
+        # test: 정답이 없으므로 predict만 (메트릭 계산 불가)
         # test는 gold context가 없으므로 retrieval 필수
         if not data_args.eval_retrieval:
             raise ValueError(
@@ -70,13 +210,13 @@ def main():
             )
         training_args.do_eval = False
         training_args.do_predict = True
-        logger.info("🎯 Inference mode: TEST (do_predict only, retrieval required)")
+        logger.info("🎯 Inference mode: TEST (do_predict only, no metrics)")
     else:
-        # train/validation: 정답이 있으므로 eval + predict 모두 수행
+        # train/validation: 정답이 있으므로 do_eval만 수행 (메트릭 계산 + predictions 저장)
         training_args.do_eval = True
-        training_args.do_predict = True
+        training_args.do_predict = False
         logger.info(
-            f"🎯 Inference mode: {inference_split.upper()} (do_eval + do_predict)"
+            f"🎯 Inference mode: {inference_split.upper()} (do_eval only, with metrics)"
         )
 
     # 모델 경로 자동 결정 (use_trained_model=True이면 best checkpoint 자동 탐색)
@@ -89,6 +229,23 @@ def main():
     # inference_split에 맞는 데이터셋 로드
     datasets = load_inference_dataset(data_args, inference_split)
     logger.info(f"📊 Dataset loaded: {datasets}")
+
+    # Validation split일 경우 eval_labels.json 생성 (실험용)
+    if inference_split == "validation":
+        import json
+
+        labels_path = os.path.join(training_args.output_dir, "eval_labels.json")
+        if not os.path.exists(labels_path):
+            logger.info("📝 Creating eval_labels.json for validation experiments...")
+            labels = {}
+            for ex in datasets["validation"]:
+                qid = ex["id"]
+                answers = ex["answers"]["text"]  # list of answers
+                labels[qid] = answers
+            os.makedirs(training_args.output_dir, exist_ok=True)
+            with open(labels_path, "w", encoding="utf-8") as f:
+                json.dump(labels, f, ensure_ascii=False, indent=2)
+            logger.info(f"✅ eval_labels.json saved: {labels_path}")
 
     # AutoConfig를 이용하여 pretrained model 과 tokenizer를 불러옵니다.
     config = AutoConfig.from_pretrained(
@@ -109,25 +266,61 @@ def main():
         sys.argv[1] if len(sys.argv) == 2 and sys.argv[1].endswith(".yaml") else None
     )
 
+    # YAML에서 retrieval alpha 가져오기 (캐시 기반 retrieval용)
+    retrieval_alpha = 0.35  # 기본값
+    if config_path:
+        try:
+            import yaml
+
+            with open(config_path, "r", encoding="utf-8") as f:
+                yaml_config = yaml.safe_load(f)
+            retrieval_config = yaml_config.get("retrieval", {})
+            retrieval_alpha = retrieval_config.get("alpha", 0.35)
+        except Exception:
+            pass
+
     # =========================================================================
     # Test/Non-test 분기: 명확한 정책 분리
+    # 캐시가 있으면 캐시 사용, 없으면 실시간 retrieval로 fallback
     # =========================================================================
     if inference_split == "test":
         # TEST 분기: retrieval 필수, compare 불가
         logger.info("📍 TEST branch: retrieval required, no gold context")
-        retriever = SparseRetrieval(
-            tokenize_fn=tokenizer.tokenize,
-            config_path=config_path,
-            use_faiss=data_args.use_faiss,
-            num_clusters=data_args.num_clusters,
-        )
-        retriever.build()
-        datasets = retrieve_and_build_dataset(
-            retriever=retriever,
-            datasets=datasets,
-            data_args=data_args,
-            include_answers=False,
-        )
+
+        # 캐시 확인
+        test_cache_path = get_path("test_cache")
+        if os.path.exists(test_cache_path):
+            logger.info(f"📦 Using cached retrieval from {test_cache_path}")
+            new_test_dataset = load_retrieval_from_cache(
+                cache_path=test_cache_path,
+                dataset=datasets["validation"],
+                data_args=data_args,
+                alpha=retrieval_alpha,
+            )
+            retriever = None
+        else:
+            logger.info(
+                f"⚠️  Cache not found, running live retrieval ({data_args.retrieval_type})"
+            )
+            retriever = get_retriever(
+                retrieval_type=data_args.retrieval_type,
+                tokenize_fn=tokenizer.tokenize,
+                config_path=config_path,
+            )
+            retriever.build()
+
+            # Use shared utility for retrieval
+            new_test_dataset = retrieve_and_build_dataset(
+                retriever=retriever,
+                dataset=datasets["validation"],
+                data_args=data_args,
+                split_name="test",
+                is_train=False,
+                tokenizer=tokenizer,
+            )
+
+        datasets = DatasetDict({"validation": new_test_dataset})
+
         run_mrc(
             data_args=data_args,
             training_args=training_args,
@@ -149,20 +342,43 @@ def main():
         retriever = None
 
         if data_args.eval_retrieval:
-            logger.info("🔍 eval_retrieval=True: running retrieval")
-            retriever = SparseRetrieval(
-                tokenize_fn=tokenizer.tokenize,
-                config_path=config_path,
-                use_faiss=data_args.use_faiss,
-                num_clusters=data_args.num_clusters,
+            # 캐시 경로 결정 (validation/train)
+            cache_path = (
+                get_path("val_cache")
+                if inference_split == "validation"
+                else get_path("train_cache")
             )
-            retriever.build()
-            datasets = retrieve_and_build_dataset(
-                retriever=retriever,
-                datasets=datasets,
-                data_args=data_args,
-                include_answers=True,
-            )
+
+            if os.path.exists(cache_path):
+                logger.info(f"📦 Using cached retrieval from {cache_path}")
+                new_validation_dataset = load_retrieval_from_cache(
+                    cache_path=cache_path,
+                    dataset=datasets["validation"],
+                    data_args=data_args,
+                    alpha=retrieval_alpha,
+                )
+                datasets = DatasetDict({"validation": new_validation_dataset})
+            else:
+                logger.info(
+                    f"⚠️  Cache not found at {cache_path}, running live retrieval ({data_args.retrieval_type})"
+                )
+                retriever = get_retriever(
+                    retrieval_type=data_args.retrieval_type,
+                    tokenize_fn=tokenizer.tokenize,
+                    config_path=config_path,
+                )
+                retriever.build()
+
+                # Use shared utility for retrieval
+                new_validation_dataset = retrieve_and_build_dataset(
+                    retriever=retriever,
+                    dataset=datasets["validation"],
+                    data_args=data_args,
+                    split_name="validation",
+                    is_train=False,
+                    tokenizer=tokenizer,
+                )
+                datasets = DatasetDict({"validation": new_validation_dataset})
         else:
             logger.info("📄 eval_retrieval=False: using gold context")
 
@@ -177,70 +393,6 @@ def main():
             retriever=retriever,
             original_datasets=original_datasets,
         )
-
-
-def retrieve_and_build_dataset(
-    retriever: BaseRetrieval,
-    datasets: DatasetDict,
-    data_args: DataTrainingArguments,
-    include_answers: bool,
-) -> DatasetDict:
-    """
-    Retriever를 사용해 question에 맞는 context를 검색하고 MRC용 데이터셋 생성.
-
-    Args:
-        retriever: 이미 build()된 retrieval 객체 (외부 주입)
-        datasets: 원본 데이터셋 (question, id 포함)
-        data_args: top_k_retrieval 등 설정
-        include_answers: 의도적으로 answers를 포함할지 여부
-                        - True: validation/train (원본에 answers 있으면 유지)
-                        - False: test (원본에 answers 없음, 강제 제외)
-
-    Returns:
-        Retrieved context가 포함된 DatasetDict
-    """
-    # 1. Retrieval 수행
-    df = retriever.retrieve(datasets["validation"], topk=data_args.top_k_retrieval)
-
-    # 2. 실제 DataFrame에 answers 컬럼이 있는지 확인
-    has_answers = "answers" in df.columns
-
-    # 3. HF Features 정의
-    # include_answers=True이고 실제로 answers가 있는 경우에만 포함
-    if include_answers and has_answers:
-        # Validation/Train: answers 포함
-        used_columns = ["id", "question", "context", "answers"]
-        features = Features(
-            {
-                "id": Value(dtype="string", id=None),
-                "question": Value(dtype="string", id=None),
-                "context": Value(dtype="string", id=None),
-                "answers": Sequence(
-                    feature={
-                        "text": Value(dtype="string", id=None),
-                        "answer_start": Value(dtype="int32", id=None),
-                    },
-                    length=-1,
-                    id=None,
-                ),
-            }
-        )
-    else:
-        # Test 또는 answers 없는 경우: id, question, context만
-        used_columns = ["id", "question", "context"]
-        features = Features(
-            {
-                "id": Value(dtype="string", id=None),
-                "question": Value(dtype="string", id=None),
-                "context": Value(dtype="string", id=None),
-            }
-        )
-
-    # 4. 필요한 컬럼만 남기고 HF Dataset으로 변환
-    df = df[used_columns].reset_index(drop=True)
-    new_dataset = Dataset.from_pandas(df, features=features)
-
-    return DatasetDict({"validation": new_dataset})
 
 
 def run_mrc(
@@ -338,6 +490,14 @@ def run_mrc(
         load_from_cache_file=not data_args.overwrite_cache,
     )
 
+    logger.info(f"📊 Validation examples: {len(datasets['validation'])} questions")
+    logger.info(
+        f"📊 Evaluation spans after tokenization: {len(eval_dataset)} spans (with doc_stride={data_args.doc_stride})"
+    )
+    logger.info(
+        f"📊 Average spans per question: {len(eval_dataset) / len(datasets['validation']):.1f}"
+    )
+
     # Data collator
     # flag가 True이면 이미 max length로 padding된 상태입니다.
     # 그렇지 않다면 data collator에서 padding을 진행해야합니다.
@@ -371,17 +531,17 @@ def run_mrc(
             {"id": k, "prediction_text": v} for k, v in predictions.items()
         ]
 
-        if training_args.do_predict:
-            return formatted_predictions
-        elif training_args.do_eval:
+        # do_eval이 True면 항상 references 포함 (metric 계산 위해)
+        if training_args.do_eval:
             references = [
                 {"id": ex["id"], "answers": ex[answer_column_name]}
                 for ex in datasets["validation"]
             ]
-
             return EvalPrediction(
                 predictions=formatted_predictions, label_ids=references
             )
+        elif training_args.do_predict:
+            return formatted_predictions
 
     metric = evaluate.load("squad")
 
@@ -412,23 +572,105 @@ def run_mrc(
 
     logger.info("*** Evaluate ***")
 
-    # eval dataset & eval example - predictions.json 생성됨
-    if training_args.do_predict:
+    # do_eval과 do_predict 실행 (상호 배타적)
+    # - do_eval: trainer.evaluate() → 메트릭 계산 + predictions 저장 (validation/train용)
+    # - do_predict: trainer.predict() → predictions만 저장, 메트릭 없음 (test용)
+
+    if training_args.do_eval:
+        # Evaluation 실행 (메트릭 계산됨)
+        metrics = trainer.evaluate()
+        metrics["eval_samples"] = len(eval_dataset)
+
+        # 동적 prefix 사용 (train/val/test에 따라 다른 파일명)
+        prefix_map = {"train": "train", "validation": "val", "test": "test"}
+        eval_prefix = prefix_map.get(inference_split, "test")
+
+        trainer.log_metrics(eval_prefix, metrics)
+        trainer.save_metrics(eval_prefix, metrics)
+
+        logger.info(f"📊 Evaluation metrics saved: {eval_prefix}_results.json")
+        logger.info("=" * 80)
+        logger.info("✅ EVALUATION COMPLETED - Results saved:")
+        logger.info(
+            f"   📄 predictions_{eval_prefix}.json: {training_args.output_dir}/predictions_{eval_prefix}.json"
+        )
+        logger.info(
+            f"   📄 nbest_predictions_{eval_prefix}.json: {training_args.output_dir}/nbest_predictions_{eval_prefix}.json"
+        )
+        logger.info(
+            f"   📊 {eval_prefix}_pred.csv: {training_args.output_dir}/{eval_prefix}_pred.csv"
+        )
+
+        # Validation/Train일 경우 정답 비교 파일 생성
+        if inference_split in ["validation", "train"]:
+            import json
+            import pandas as pd
+
+            # predictions 로드
+            pred_path = os.path.join(
+                training_args.output_dir, f"predictions_{eval_prefix}.json"
+            )
+            with open(pred_path, "r", encoding="utf-8") as f:
+                predictions = json.load(f)
+
+            # 정답과 예측 비교 데이터 생성
+            comparison_data = []
+            for ex in datasets["validation"]:
+                qid = ex["id"]
+                question = ex["question"]
+                gold_answers = ex["answers"]["text"]
+                pred_answer = predictions.get(qid, "")
+
+                # EM 체크
+                is_correct = pred_answer in gold_answers
+
+                comparison_data.append(
+                    {
+                        "id": qid,
+                        "question": question,
+                        "gold_answers": " | ".join(gold_answers),  # 여러 정답은 | 구분
+                        "prediction": pred_answer,
+                        "correct": "✓" if is_correct else "✗",
+                    }
+                )
+
+            # CSV 저장
+            df = pd.DataFrame(comparison_data)
+            comparison_csv = os.path.join(
+                training_args.output_dir, f"{eval_prefix}_comparison.csv"
+            )
+            df.to_csv(comparison_csv, index=False, encoding="utf-8-sig")
+
+            logger.info(
+                f"   📊 {eval_prefix}_comparison.csv: {comparison_csv} (with gold answers)"
+            )
+
+        logger.info("=" * 80)
+
+    elif training_args.do_predict:
+        # Prediction만 실행 (메트릭 계산 안 됨, test용)
         predictions = trainer.predict(
             test_dataset=eval_dataset, test_examples=datasets["validation"]
         )
 
-        # predictions.json 은 postprocess_qa_predictions() 호출시 이미 저장됩니다.
+        # predictions.json은 postprocess_qa_predictions()에서 이미 저장됨
+        # prefix에 따라 파일명 동적 생성
+        prefix_map = {"train": "train", "validation": "val", "test": "test"}
+        prefix = prefix_map.get(inference_split, "test")
+
         logger.info("=" * 80)
         logger.info("✅ INFERENCE COMPLETED - Results saved:")
         logger.info(
-            f"   📄 predictions_test.json: {training_args.output_dir}/predictions_test.json"
+            f"   📄 predictions_{prefix}.json: {training_args.output_dir}/predictions_{prefix}.json"
         )
         logger.info(
-            f"   📄 nbest_predictions_test.json: {training_args.output_dir}/nbest_predictions_test.json"
+            f"   📄 nbest_predictions_{prefix}.json: {training_args.output_dir}/nbest_predictions_{prefix}.json"
         )
-        logger.info(f"   📊 test_pred.csv: {training_args.output_dir}/test_pred.csv")
-        logger.info(f"      👉 Use this CSV file for test submission!")
+        logger.info(
+            f"   📊 {prefix}_pred.csv: {training_args.output_dir}/{prefix}_pred.csv"
+        )
+        if inference_split == "test":
+            logger.info(f"      👉 Use this CSV file for test submission!")
         logger.info("=" * 80)
 
         # Validation set에서 gold vs retrieval 비교 (옵션)
@@ -452,13 +694,6 @@ def run_mrc(
             print(
                 "No metric can be presented because there is no correct answer given. Job done!"
             )
-
-    if training_args.do_eval:
-        metrics = trainer.evaluate()
-        metrics["eval_samples"] = len(eval_dataset)
-
-        trainer.log_metrics("test", metrics)
-        trainer.save_metrics("test", metrics)
 
 
 def compare_gold_vs_retrieval(

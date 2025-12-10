@@ -2,13 +2,17 @@
 
 # 실험 재현성 관련 패키지
 transformers==4.39.3
-accelerate==0.30.0
+# accelerate==0.30.0 transformers와 버전 호환 이슈 존재함
 pandas==2.3.3
 evaluate==0.4.6
 
 # faiss install (if you want to)
 # faiss-gpu
 faiss-gpu-cu12
+
+# retrieval
+bm25s>=0.1.4  # Fast BM25 (NumPy vectorized, 10-100x faster than rank-bm25)
+sentence-transformers>=2.2.2  # KoE5 dense retrieval
 
 # 사용자 추가 패키지 (재현과 무관)
 pyyaml>=6.0
