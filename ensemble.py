@@ -2,14 +2,30 @@
 MRC 모델 앙상블 (Soft Voting with Weighted Sum)
 
 여러 학습된 모델의 start/end logits를 weighted sum하여 앙상블 수행
+
+사용법:
+  1. 직접 모델 경로 지정:
+     python ensemble.py --model_paths ./outputs/model1 ./outputs/model2 --weights 0.5 0.5
+
+  2. YAML config 파일 사용 (여러 실험 결과 앙상블):
+     python ensemble.py --configs configs/active/exp1.yaml configs/active/exp2.yaml
+
+  3. 파일 상단의 ENSEMBLE_MODELS 리스트 사용:
+     python ensemble.py
+
+제약사항:
+  - 같은 토크나이저/모델 아키텍처끼리만 앙상블 가능 (텐서 shape 일치 필요)
 """
 
 import os
+import sys
 import json
 import csv
+import glob
 import argparse
+import yaml
 from typing import List, Dict, Tuple, Optional
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import torch
 import numpy as np
@@ -23,7 +39,11 @@ from transformers import (
 )
 
 from src.retrieval.weighted_hybrid import WeightedHybridRetrieval
+from src.retrieval.paths import get_path
 from src.utils.qa import postprocess_qa_predictions
+from src.utils import get_logger
+
+logger = get_logger(__name__)
 
 
 # ============================================================
@@ -32,9 +52,8 @@ from src.utils.qa import postprocess_qa_predictions
 ENSEMBLE_MODELS = [
     # (모델 경로, 가중치)
     # 가중치는 자동으로 정규화됩니다 (합이 1이 되도록)
-    ("./outputs/taewon/oceann315", 1.0),
-    ("./outputs/taewon/roberta-large", 1.0),
-    # ("./outputs/dahyeong/model", 0.5),
+    # ("./outputs/dahyeong/exp_ra_k3_ds128", 1.0),
+    # ("./outputs/dahyeong/exp_ra_k5_ds128", 1.0),
     
     # 💡 가중치 예시:
     # - 균등: 모두 1.0
@@ -42,6 +61,62 @@ ENSEMBLE_MODELS = [
     # - 수동 조절: 원하는 비율로 설정
 ]
 # ============================================================
+
+
+def find_best_checkpoint(output_dir: str) -> str:
+    """
+    output_dir에서 best checkpoint 경로를 찾습니다.
+    
+    탐색 우선순위:
+    1. best_checkpoint_path.txt 파일이 있으면 그 내용 사용
+    2. checkpoint-* 폴더 중 가장 최신 것
+    3. output_dir 자체 (model.safetensors/pytorch_model.bin이 있는 경우)
+    """
+    # 1. best_checkpoint_path.txt 확인
+    best_path_file = os.path.join(output_dir, "best_checkpoint_path.txt")
+    if os.path.exists(best_path_file):
+        with open(best_path_file, "r") as f:
+            checkpoint_path = f.read().strip()
+            if os.path.exists(checkpoint_path):
+                return checkpoint_path
+    
+    # 2. checkpoint-* 폴더 탐색
+    checkpoint_dirs = glob.glob(os.path.join(output_dir, "checkpoint-*"))
+    if checkpoint_dirs:
+        # 숫자로 정렬하여 가장 큰 것 선택
+        def get_step(path):
+            try:
+                return int(os.path.basename(path).split("-")[1])
+            except:
+                return 0
+        checkpoint_dirs.sort(key=get_step, reverse=True)
+        return checkpoint_dirs[0]
+    
+    # 3. output_dir 자체 확인
+    model_files = ["model.safetensors", "pytorch_model.bin"]
+    for model_file in model_files:
+        if os.path.exists(os.path.join(output_dir, model_file)):
+            return output_dir
+    
+    raise FileNotFoundError(
+        f"❌ 모델을 찾을 수 없습니다: {output_dir}\n"
+        f"💡 체크포인트 또는 model.safetensors/pytorch_model.bin이 필요합니다."
+    )
+
+
+def load_config_from_yaml(yaml_path: str) -> Dict:
+    """YAML config 파일 로드"""
+    with open(yaml_path, "r", encoding="utf-8") as f:
+        return yaml.safe_load(f)
+
+
+def get_model_path_from_config(config: Dict) -> str:
+    """YAML config에서 모델 경로 추출 (best checkpoint 자동 탐색)"""
+    output_dir = config.get("output_dir", "")
+    if not output_dir:
+        raise ValueError("config에 output_dir이 없습니다.")
+    
+    return find_best_checkpoint(output_dir)
 
 
 @dataclass
@@ -57,9 +132,11 @@ class EnsembleConfig:
     top_k_retrieval: int = 10
     batch_size: int = 16
     use_retrieval: bool = True
-    retrieval_alpha: float = 0.35  # WeightedHybridRetrieval의 BM25 가중치 (base.yaml과 동일)
-    corpus_emb_path: Optional[str] = "./data/embeddings/kure_corpus_emb.npy"  # KURE corpus embedding 경로
-    passages_meta_path: Optional[str] = "./data/embeddings/kure_passages_meta.jsonl"  # KURE passages meta 경로
+    use_cache: bool = True          # Retrieval 캐시 사용 여부
+    retrieval_alpha: float = 0.35   # WeightedHybridRetrieval의 BM25 가중치
+    corpus_emb_path: Optional[str] = None
+    passages_meta_path: Optional[str] = None
+    inference_split: str = "test"   # test / validation
 
 
 class MRCEnsemble:
@@ -79,8 +156,8 @@ class MRCEnsemble:
             total = sum(config.weights)
             self.weights = [w / total for w in config.weights]
         
-        print(f"🔧 Device: {self.device}")
-        print(f"📊 Model weights: {self.weights}")
+        logger.info(f"🔧 Device: {self.device}")
+        logger.info(f"📊 Model weights: {self.weights}")
     
     def load_models(self):
         """모든 모델 로드"""
@@ -91,10 +168,18 @@ class MRCEnsemble:
         for i, model_path in enumerate(self.config.model_paths):
             print(f"\n[{i+1}/{len(self.config.model_paths)}] Loading: {model_path}")
             
+            # Best checkpoint 자동 탐색
+            try:
+                actual_path = find_best_checkpoint(model_path)
+                if actual_path != model_path:
+                    print(f"   📍 Found checkpoint: {actual_path}")
+            except FileNotFoundError:
+                actual_path = model_path  # 그대로 시도
+            
             # 모델과 토크나이저 로드
-            config = AutoConfig.from_pretrained(model_path)
-            tokenizer = AutoTokenizer.from_pretrained(model_path, use_fast=True)
-            model = AutoModelForQuestionAnswering.from_pretrained(model_path, config=config)
+            config = AutoConfig.from_pretrained(actual_path)
+            tokenizer = AutoTokenizer.from_pretrained(actual_path, use_fast=True)
+            model = AutoModelForQuestionAnswering.from_pretrained(actual_path, config=config)
             model.to(self.device)
             model.eval()
             
@@ -102,6 +187,16 @@ class MRCEnsemble:
             self.tokenizers.append(tokenizer)
             
             print(f"   ✅ Loaded: {config.model_type}")
+        
+        # 토크나이저 일관성 검증
+        if len(self.tokenizers) > 1:
+            base_vocab_size = len(self.tokenizers[0])
+            for i, tok in enumerate(self.tokenizers[1:], 2):
+                if len(tok) != base_vocab_size:
+                    logger.warning(
+                        f"⚠️ 토크나이저 vocab size 불일치: "
+                        f"Model 1={base_vocab_size}, Model {i}={len(tok)}"
+                    )
         
         print(f"\n✅ Total {len(self.models)} models loaded!")
     
@@ -112,6 +207,91 @@ class MRCEnsemble:
         print(f"   Dataset: {datasets}")
         return datasets
     
+    def load_retrieval_from_cache(self, dataset: Dataset) -> Dataset:
+        """캐시된 retrieval 결과 로드 (inference.py와 동일한 로직)"""
+        # 캐시 경로 결정
+        if self.config.inference_split == "test":
+            cache_path = get_path("test_cache")
+        else:
+            cache_path = get_path("val_cache")
+        
+        if not os.path.exists(cache_path):
+            return None
+        
+        logger.info(f"📦 Loading retrieval cache from: {cache_path}")
+        
+        # 캐시 로드
+        cache = {}
+        with open(cache_path, "r", encoding="utf-8") as f:
+            for line in f:
+                item = json.loads(line.strip())
+                cache[item["id"]] = item
+        
+        # Passages corpus 로드
+        passages_meta_path = self.config.passages_meta_path or get_path("kure_passages_meta")
+        wiki_path = get_path("wiki_corpus")
+        
+        if passages_meta_path and os.path.exists(passages_meta_path):
+            passage_texts = []
+            with open(passages_meta_path, "r", encoding="utf-8") as f:
+                for line in f:
+                    meta = json.loads(line.strip())
+                    passage_texts.append(meta["text"])
+        else:
+            with open(wiki_path, "r", encoding="utf-8") as f:
+                wiki = json.load(f)
+            unique_texts = {}
+            for doc_id, doc_info in wiki.items():
+                text = doc_info["text"]
+                if text not in unique_texts:
+                    unique_texts[text] = text
+            passage_texts = list(unique_texts.keys())
+        
+        # 결과 구성
+        result_data = {"id": [], "question": [], "context": []}
+        top_k = self.config.top_k_retrieval
+        alpha = self.config.retrieval_alpha
+        
+        for example in dataset:
+            qid = example["id"]
+            cache_entry = cache.get(qid)
+            
+            if cache_entry is None:
+                logger.warning(f"⚠️ Cache miss for {qid}")
+                context = ""
+            else:
+                candidates = cache_entry["retrieved"]
+                if candidates:
+                    bm25_scores = np.array([c["score_bm25"] for c in candidates])
+                    dense_scores = np.array([c["score_dense"] for c in candidates])
+                    
+                    eps = 1e-9
+                    bm25_n = (bm25_scores - bm25_scores.min()) / (bm25_scores.max() - bm25_scores.min() + eps)
+                    dense_n = (dense_scores - dense_scores.min()) / (dense_scores.max() - dense_scores.min() + eps)
+                    hybrid_scores = alpha * bm25_n + (1 - alpha) * dense_n
+                    
+                    sorted_indices = np.argsort(hybrid_scores)[::-1][:top_k]
+                    contexts = []
+                    for idx in sorted_indices:
+                        passage_id = candidates[idx]["passage_id"]
+                        if passage_id < len(passage_texts):
+                            contexts.append(passage_texts[passage_id])
+                    context = " ".join(contexts)
+                else:
+                    context = ""
+            
+            result_data["id"].append(qid)
+            result_data["question"].append(example["question"])
+            result_data["context"].append(context)
+        
+        features = Features({
+            "id": Value(dtype="string"),
+            "question": Value(dtype="string"),
+            "context": Value(dtype="string"),
+        })
+        
+        return Dataset.from_dict(result_data, features=features)
+    
     def run_retrieval(self, datasets: DatasetDict) -> DatasetDict:
         """Weighted Hybrid Retrieval 수행 (BM25 + KURE)"""
         if not self.config.use_retrieval:
@@ -119,17 +299,26 @@ class MRCEnsemble:
         
         print("\n🔍 Running Weighted Hybrid Retrieval (BM25 + KURE)...")
         
-        # 첫 번째 토크나이저 사용
+        # 캐시 사용 시도
+        if self.config.use_cache:
+            cached_dataset = self.load_retrieval_from_cache(datasets["validation"])
+            if cached_dataset is not None:
+                datasets = DatasetDict({"validation": cached_dataset})
+                print(f"   ✅ Loaded from cache: {len(datasets['validation'])} examples")
+                return datasets
+            else:
+                logger.info("⚠️ Cache not found, running live retrieval...")
+        
+        # 실시간 retrieval
         tokenizer = self.tokenizers[0]
         
-        # 기본 경로 설정 (base.yaml과 동일)
-        corpus_emb_path = self.config.corpus_emb_path or "./data/embeddings/kure_corpus_emb.npy"
-        passages_meta_path = self.config.passages_meta_path or "./data/embeddings/kure_passages_meta.jsonl"
+        corpus_emb_path = self.config.corpus_emb_path or get_path("kure_corpus_emb")
+        passages_meta_path = self.config.passages_meta_path or get_path("kure_passages_meta")
         
         retriever = WeightedHybridRetrieval(
             tokenize_fn=tokenizer.tokenize,
             data_path="./data",
-            context_path="wikipedia_documents_normalized.json",
+            context_path="wikipedia_documents.json",
             corpus_emb_path=corpus_emb_path,
             passages_meta_path=passages_meta_path,
             alpha=self.config.retrieval_alpha,
@@ -332,24 +521,44 @@ class MRCEnsemble:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="MRC Model Ensemble")
+    parser = argparse.ArgumentParser(
+        description="MRC Model Ensemble (Soft Voting with Weighted Sum)",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+예시:
+  # 1. 직접 모델 경로 지정
+  python ensemble.py --model_paths ./outputs/model1 ./outputs/model2 --weights 0.5 0.5
+
+  # 2. YAML config 파일 사용 (여러 실험 결과 앙상블)
+  python ensemble.py --configs configs/active/exp1.yaml configs/active/exp2.yaml
+
+  # 3. 파일 상단의 ENSEMBLE_MODELS 리스트 사용
+  python ensemble.py
+        """
+    )
     parser.add_argument(
         "--model_paths", 
         nargs="+", 
         default=None,
-        help="학습된 모델 경로들 (미지정시 ENSEMBLE_MODELS 사용)"
+        help="학습된 모델 경로들 (best checkpoint 자동 탐색)"
+    )
+    parser.add_argument(
+        "--configs",
+        nargs="+",
+        default=None,
+        help="YAML config 파일 경로들 (output_dir에서 모델 자동 탐색)"
     )
     parser.add_argument(
         "--weights",
         nargs="+",
         type=float,
         default=None,
-        help="모델별 가중치 (미지정시 ENSEMBLE_MODELS 또는 균등 분배)"
+        help="모델별 가중치 (미지정시 균등 분배)"
     )
     parser.add_argument(
         "--output_dir",
         type=str,
-        default="./outputs/taewon/ensemble",
+        default="./outputs/ensemble",
         help="결과 저장 경로"
     )
     parser.add_argument(
@@ -359,10 +568,23 @@ def main():
         help="테스트 데이터셋 경로"
     )
     parser.add_argument(
+        "--split",
+        type=str,
+        choices=["test", "validation"],
+        default="test",
+        help="inference split (test: 제출용, validation: 평가용)"
+    )
+    parser.add_argument(
         "--top_k",
         type=int,
         default=10,
         help="Retrieval top-k"
+    )
+    parser.add_argument(
+        "--doc_stride",
+        type=int,
+        default=128,
+        help="Document stride for tokenization"
     )
     parser.add_argument(
         "--batch_size",
@@ -373,49 +595,82 @@ def main():
     parser.add_argument(
         "--no_retrieval",
         action="store_true",
-        help="Retrieval 사용 안함 (validation용)"
+        help="Retrieval 사용 안함 (gold context 사용)"
+    )
+    parser.add_argument(
+        "--no_cache",
+        action="store_true",
+        help="Retrieval 캐시 사용 안함 (항상 실시간 retrieval)"
     )
     parser.add_argument(
         "--retrieval_alpha",
         type=float,
         default=0.35,
-        help="WeightedHybridRetrieval의 BM25 가중치 (0~1, 기본값: 0.35, base.yaml과 동일)"
-    )
-    parser.add_argument(
-        "--corpus_emb_path",
-        type=str,
-        default="./data/embeddings/kure_corpus_emb.npy",
-        help="KURE corpus embedding 경로 (기본값: ./data/embeddings/kure_corpus_emb.npy, base.yaml과 동일)"
-    )
-    parser.add_argument(
-        "--passages_meta_path",
-        type=str,
-        default="./data/embeddings/kure_passages_meta.jsonl",
-        help="KURE passages meta 경로 (기본값: ./data/embeddings/kure_passages_meta.jsonl, base.yaml과 동일)"
+        help="WeightedHybridRetrieval의 BM25 가중치 (0~1)"
     )
     
     args = parser.parse_args()
     
-    # 모델 경로와 가중치 결정
+    # 모델 경로와 가중치 결정 (우선순위: --model_paths > --configs > ENSEMBLE_MODELS)
+    model_paths = []
+    weights = args.weights
+    
     if args.model_paths is not None:
-        # 커맨드라인에서 지정한 경우
+        # 1. 직접 경로 지정
         model_paths = args.model_paths
-        weights = args.weights
-    else:
-        # ENSEMBLE_MODELS에서 가져오기
-        if not ENSEMBLE_MODELS:
-            raise ValueError(
-                "❌ 앙상블할 모델이 없습니다!\n"
-                "💡 ensemble.py 상단의 ENSEMBLE_MODELS에 모델을 추가하거나\n"
-                "   --model_paths 인자를 사용하세요."
-            )
+        logger.info("📋 Using model paths from command line")
+        
+    elif args.configs is not None:
+        # 2. YAML config에서 추출
+        logger.info("📋 Extracting model paths from YAML configs...")
+        for config_path in args.configs:
+            config = load_config_from_yaml(config_path)
+            try:
+                model_path = get_model_path_from_config(config)
+                model_paths.append(model_path)
+                logger.info(f"   ✅ {config_path} -> {model_path}")
+            except Exception as e:
+                logger.error(f"   ❌ {config_path}: {e}")
+                sys.exit(1)
+                
+    elif ENSEMBLE_MODELS:
+        # 3. 상단의 ENSEMBLE_MODELS 리스트 사용
         model_paths = [path for path, _ in ENSEMBLE_MODELS]
         weights = [weight for _, weight in ENSEMBLE_MODELS]
+        logger.info("📋 Using ENSEMBLE_MODELS from script")
+        
+    else:
+        raise ValueError(
+            "❌ 앙상블할 모델이 없습니다!\n"
+            "💡 다음 중 하나를 사용하세요:\n"
+            "   1. --model_paths ./outputs/model1 ./outputs/model2\n"
+            "   2. --configs configs/exp1.yaml configs/exp2.yaml\n"
+            "   3. ensemble.py 상단의 ENSEMBLE_MODELS 리스트"
+        )
+    
+    if not model_paths:
+        raise ValueError("❌ 유효한 모델 경로가 없습니다.")
+    
+    # 데이터셋 경로 결정
+    if args.split == "validation":
+        test_dataset_path = "./data/train_dataset"  # validation split 포함
+    else:
+        test_dataset_path = args.test_dataset
     
     print("\n" + "=" * 60)
     print("📋 Ensemble Configuration")
     print("=" * 60)
-    for i, (path, w) in enumerate(zip(model_paths, weights or [1.0]*len(model_paths))):
+    print(f"   Split: {args.split}")
+    print(f"   Dataset: {test_dataset_path}")
+    print(f"   Retrieval: {'Enabled' if not args.no_retrieval else 'Disabled (gold context)'}")
+    print(f"   Cache: {'Enabled' if not args.no_cache else 'Disabled'}")
+    print(f"   Top-k: {args.top_k}")
+    print(f"   Alpha: {args.retrieval_alpha}")
+    print(f"   Doc stride: {args.doc_stride}")
+    print("-" * 60)
+    print("   Models:")
+    for i, path in enumerate(model_paths):
+        w = weights[i] if weights else 1.0
         print(f"   [{i+1}] {path} (weight: {w})")
     print("=" * 60)
     
@@ -424,13 +679,14 @@ def main():
         model_paths=model_paths,
         weights=weights,
         output_dir=args.output_dir,
-        test_dataset_path=args.test_dataset,
+        test_dataset_path=test_dataset_path,
         top_k_retrieval=args.top_k,
+        doc_stride=args.doc_stride,
         batch_size=args.batch_size,
         use_retrieval=not args.no_retrieval,
+        use_cache=not args.no_cache,
         retrieval_alpha=args.retrieval_alpha,
-        corpus_emb_path=args.corpus_emb_path,
-        passages_meta_path=args.passages_meta_path,
+        inference_split=args.split,
     )
     
     # 앙상블 실행
@@ -439,6 +695,7 @@ def main():
     
     print("\n" + "=" * 60)
     print("🎉 Ensemble finished successfully!")
+    print(f"   📄 Output: {args.output_dir}")
     print("=" * 60)
 
 
