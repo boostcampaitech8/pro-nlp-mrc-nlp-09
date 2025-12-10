@@ -13,7 +13,7 @@ def get_hard_sample(
         context_path,
         bi_encoder_model,
         cross_encoder_model,
-        candidate=200,
+        candidate,
         hard_sample_k=5
     ):
     device = "cuda"
@@ -106,51 +106,7 @@ def get_hard_sample(
                 "positive": train_examples[i+j].get("context", ""),
                 "candidates": candidates
             })
-    '''
-    # ========================================================
-    # TEST: 첫 질문에 대해 cross-encoder 5개 후보 테스트
-    # ========================================================
-    print("\n=== CROSS-ENCODER TEST (첫 질문 5개 후보) ===")
 
-    # 첫 번째 retrieved_candidates 하나만 테스트
-    test_item = retrieved_candidates[0]
-    test_question = test_item["question"]
-    test_positive = test_item["positive"]
-    test_candidates = test_item["candidates"][:5]  # 상위 5개 후보
-
-    print("Question:", test_question[:100] + "..." if len(test_question)>100 else test_question)
-    print("Positive:", test_positive[:100] + "..." if len(test_positive)>100 else test_positive)
-    print("\nTop 5 Candidates:")
-    for i, cand in enumerate(test_candidates):
-        print(f"  {i+1}: {cand[:80]}...")
-
-    # Cross-encoder로 직접 점수 계산
-    test_pairs = [(test_question, test_positive)] + [(test_question, c) for c in test_candidates]
-    test_scores = cross_model.predict(test_pairs)
-
-    print("\n=== SCORES ===")
-    print(f"Positive: {test_scores[0]:.4f}")
-    for i, score in enumerate(test_scores[1:], 1):
-        print(f"Candidate {i}: {score:.4f}  ({'★' if score > test_scores[0] else ' '})")
-        
-    print("Test 완료!\n")
-
-    # ========================================================
-    # MODEL 일치도 확인
-    # ========================================================
-    print("\n=== MODEL CHECK ===")
-    print("Bi-encoder:", bi_encoder_model)
-    print("Cross-encoder:", cross_encoder_model)
-    print("Top-1 == Positive?", test_candidates[0][:50] == test_positive[:50])
-
-    # 다른 cross-encoder로 재테스트
-    print("\n=== ms-marco-MiniLM 테스트 ===")
-    test_cross = CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2', device=device)
-    test_scores2 = test_cross.predict(test_pairs)
-    print(f"Positive: {test_scores2[0]:.4f}")
-    for i, score in enumerate(test_scores2[1:], 1):
-        print(f"Candidate {i}: {score:.4f}")
-    '''
     # ========================================================
     # 6. Cross-Encoder Rerank (GPU float32)
     # ========================================================
@@ -174,7 +130,7 @@ def get_hard_sample(
 
         all_sims.extend(scores)
 
-        sim_low, sim_high = 0.6, 0.85
+        sim_low, sim_high = 0.003, 0.08
         hard_idx = [i for i, s in enumerate(scores) if sim_low <= s <= sim_high]
         chosen = sorted(hard_idx, key=lambda i: scores[i], reverse=True)[:hard_sample_k]
         negatives = [candidates[i] for i in chosen]
@@ -191,6 +147,8 @@ def get_hard_sample(
     # ========================================================
     os.makedirs("./data/plots", exist_ok=True)
     all_sims = np.array(all_sims)
+
+    # 기본 통계 출력
     print("\n=== Cross-Encoder Similarity Stats ===")
     print("count :", len(all_sims))
     print("mean  :", np.mean(all_sims))
@@ -198,11 +156,36 @@ def get_hard_sample(
     print("std   :", np.std(all_sims))
     print("min   :", np.min(all_sims))
     print("max   :", np.max(all_sims))
-    plt.hist(all_sims, bins=50)
+    print("Percentiles (50,75,90,95,99) :", np.percentile(all_sims, [50,75,90,95,99]))
+
+    # ========================================================
+    # 1) 전체 0~1 히스토그램 (참고용)
+    plt.figure(figsize=(8,4))
+    plt.hist(all_sims, bins=50, range=(0,1))
     plt.xlabel("Similarity")
     plt.ylabel("Frequency")
-    plt.title("Distribution of Cross-Encoder Similarity")
-    plt.savefig("./data/plots/sim_distribution.png")
+    plt.title("Cross-Encoder Similarity Distribution (0~1)")
+    plt.savefig("./data/plots/sim_distribution_full.png")
+    plt.close()
+
+    # ========================================================
+    # 2) 0~0.1 확대 히스토그램 (hard negative 확인용)
+    plt.figure(figsize=(8,4))
+    plt.hist(all_sims, bins=50, range=(0,0.1))
+    plt.xlabel("Similarity")
+    plt.ylabel("Frequency")
+    plt.title("Cross-Encoder Similarity Distribution (0~0.3 zoom)")
+    plt.savefig("./data/plots/sim_distribution_zoom.png")
+    plt.close()
+
+    # ========================================================
+    # 3) 로그 스케일 히스토그램 (0 근처 후보 확인용)
+    plt.figure(figsize=(8,4))
+    plt.hist(all_sims+1e-6, bins=50, log=True)  # log scale, 0 방지 위해 +1e-6
+    plt.xlabel("Similarity")
+    plt.ylabel("Frequency (log scale)")
+    plt.title("Cross-Encoder Similarity Distribution (log scale)")
+    plt.savefig("./data/plots/sim_distribution_log.png")
     plt.close()
 
     neg_counts = [len(ex["negatives"]) for ex in negative_samples]

@@ -19,7 +19,7 @@ class DenseRetrieval:
         candidate: int = 200,
         reranker_model_bi: str = "snumin44/biencoder-ko-bert-question",
         reranker_model_cross: str = "Dongjin-kr/ko-reranker",
-        hard_sample_k: int = 7,
+        hard_sample_k: int = 3,
         dpr_model: str = "snumin44/biencoder-ko-bert-question",
         dpr_model_output_dir: str = "./outputs/minseok",
         data_path: str = "./data",
