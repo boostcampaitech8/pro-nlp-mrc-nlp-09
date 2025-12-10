@@ -199,6 +199,10 @@ class BaseRetrieval(ABC):
                 # Context 구성 (Title 포함 여부 결정)
                 context_parts = []
                 for pid in doc_indices[idx]:
+                    # 인덱스 범위 체크
+                    if pid >= len(self.contexts):
+                        print(f"Warning: passage index {pid} out of range (max: {len(self.contexts)-1}), skipping")
+                        continue
                     context_text = self.contexts[pid]
                     if tokenizer:
                         # Title + SEP + Context

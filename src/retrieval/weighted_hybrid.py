@@ -273,7 +273,18 @@ class WeightedHybridRetrieval(BaseRetrieval):
             # Top-k 추출
             sorted_indices = self._stable_argsort(hybrid, bm25_full, k)
 
-            final_indices.append(sorted_indices.tolist())
+            # Passage 인덱스를 문서 인덱스로 변환
+            doc_indices = []
+            for passage_idx in sorted_indices:
+                doc_id = passage_to_doc[passage_idx]
+                ctx_idx = doc_id_to_ctx_idx.get(doc_id)
+                if ctx_idx is not None:
+                    doc_indices.append(ctx_idx)
+                else:
+                    # 매핑이 없는 경우 경고 (이론적으로는 발생하지 않아야 함)
+                    print(f"Warning: doc_id {doc_id} not found in contexts")
+            
+            final_indices.append(doc_indices)
             final_scores.append([hybrid[i] for i in sorted_indices])
 
         return final_scores, final_indices
