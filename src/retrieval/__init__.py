@@ -26,7 +26,7 @@ Usage:
         retrieval_type="weighted_hybrid",
         tokenize_fn=tokenizer.tokenize,
         data_path="./data",
-        alpha=0.7,  # BM25 가중치
+        alpha=0.35,  # BM25 가중치 (base.yaml과 일치)
     )
 
     retriever.build()
@@ -66,7 +66,7 @@ def get_retriever(
     k1: float = 1.5,
     b: float = 0.75,
     # Hybrid 옵션
-    alpha: float = 0.5,
+    alpha: float = 0.35,  # BM25 가중치 (base.yaml과 일치)
     fusion_method: str = "rrf",
     # 향후 확장: DPR 옵션
     # dpr_question_encoder: Optional[str] = None,
@@ -213,8 +213,9 @@ def get_retriever(
             passages_meta_path = get_path("kure_passages_meta")
             print(f"[Factory] Using default passages_meta_path: {passages_meta_path}")
 
-        # weighted_hybrid은 alpha default를 0.7로 사용
-        weighted_alpha = kwargs.pop("weighted_alpha", alpha if alpha != 0.5 else 0.7)
+        # alpha 직접 사용 (kwargs에 weighted_alpha가 있으면 우선 사용)
+        effective_alpha = kwargs.pop("weighted_alpha", alpha)
+        print(f"[Factory] WeightedHybridRetrieval alpha={effective_alpha}")
 
         return WeightedHybridRetrieval(
             tokenize_fn=tokenize_fn,
@@ -222,7 +223,7 @@ def get_retriever(
             context_path=context_path,
             corpus_emb_path=corpus_emb_path,
             passages_meta_path=passages_meta_path,
-            alpha=weighted_alpha,
+            alpha=effective_alpha,
             config_path=config_path,
             **kwargs,
         )

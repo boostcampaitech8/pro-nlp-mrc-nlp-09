@@ -52,6 +52,13 @@ inference_split: test                       # 추론 대상: train / validation 
 # gold context vs retrieval context 성능 비교 (비용 큼, 필요시만 true)
 compare_retrieval: false
 
+# === Title 포함 설정 (DHN과 독립) ===
+# context에 문서 제목(title)을 포함할지 여부
+Format: "{title} [SEP] {passage_text}"
+# - true: 제목 정보가 추가되어 모델이 문맥을 더 잘 이해할 수 있음
+# - false: 순수 본문만 사용 (토큰 절약)
+use_title: true
+
 
 ##################################
 # --- retrieval ---
@@ -95,7 +102,8 @@ dynamic_hard_negative:
   k_ret: 20                                 # retrieval top-k에서 샘플링
   k_read: 3                                 # 학습에 사용할 context 수 (1 pos + n neg)
   alpha: 0.35                               # hybrid score 계산용 (retrieval.alpha와 동일 권장)
-  use_title: true                           # context에 title 포함 여부
+  use_title: true                           # ⚠️ DEPRECATED: data 섹션의 use_title 사용 권장
+                                            # DHN 전용 override (설정하지 않으면 data.use_title 따름)
 
 
 ##################################
@@ -113,10 +121,10 @@ weight_decay: 0.01
 logging_steps: 100
 logging_first_step: true
 eval_strategy: epoch                        # 에포크마다 평가
-save_strategy: epoch                        # 에포크마다 저장
-save_total_limit: 2                         # best checkpoint 2개 유지
-save_only_model: true                       # model만 저장 (optimizer 제외)
-load_best_model_at_end: true                # 학습 종료 시 best checkpoint 로드
+save_strategy: epoch                        # 💾 에포크마다 저장 (load_best_model_at_end 필수)
+save_total_limit: 1                         # 💾 best checkpoint 1개만 유지 (용량 절약)
+save_only_model: true                       # 💾 model만 저장 (optimizer 제외, 용량 절약)
+load_best_model_at_end: true                # ⚠️  학습 종료 시 best model을 output_dir에 저장
 metric_for_best_model: exact_match          # EM 기준으로 best model 선택
 greater_is_better: true                     # EM이 높을수록 좋음
 save_safetensors: true                      # safetensors 형식 저장 (권장)

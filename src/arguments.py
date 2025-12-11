@@ -129,6 +129,33 @@ class DataTrainingArguments:
             "Only used when inference_split='validation'. Runs inference twice (gold + retrieval)."
         },
     )
+
+    # === Tier 3: Train/Infer top_k 분리 ===
+    train_top_k_retrieval: Optional[int] = field(
+        default=None,
+        metadata={
+            "help": "Top-k for train retrieval. If None, uses top_k_retrieval. "
+            "Lower values (1-3) reduce noise in training context."
+        },
+    )
+    infer_top_k_retrieval: Optional[int] = field(
+        default=None,
+        metadata={
+            "help": "Top-k for inference retrieval. If None, uses top_k_retrieval. "
+            "Higher values (10-20) reduce retrieval failure rate."
+        },
+    )
+
+    # === Title 포함 설정 (DHN과 독립) ===
+    use_title: bool = field(
+        default=True,
+        metadata={
+            "help": "Whether to prepend document title to context with [SEP] separator. "
+            "Format: '{title} [SEP] {passage_text}'. "
+            "This setting is independent of dynamic_hard_negative and applies to all retrieval modes."
+        },
+    )
+
     # Dynamic Hard Negative Training 관련 설정 (YAML에서 dynamic_hard_negative 섹션으로 관리)
     # 아래 설정들은 DataTrainingArguments에서 직접 사용하지 않고,
     # YAML의 dynamic_hard_negative 섹션에서 읽어 사용합니다.

@@ -31,7 +31,7 @@ from transformers import PreTrainedTokenizer
 # === 기본 설정 ===
 DEFAULT_K_RET = 20  # retrieval top-k
 DEFAULT_K_READ = 3  # train에서 사용할 context 수 (1 pos + n neg)
-DEFAULT_ALPHA = 0.7  # hybrid score 계산용 BM25 가중치
+DEFAULT_ALPHA = 0.35  # hybrid score 계산용 BM25 가중치 (base.yaml과 일치)
 
 
 def load_retrieval_cache(cache_path: str) -> Dict[str, Dict]:

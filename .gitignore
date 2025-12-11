@@ -12,3 +12,10 @@ __pycache__/
 .ipynb_checkpoints
 .DS_Store
 configs/
+corpus.jsonl
+corpus.mmindex.json
+data.csc.index.npy
+indices.csc.index.npy
+indptr.csc.index.npy
+params.index.json
+.github/prompts/MRC_proj.prompt.md

@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
+# TODO: gold context 위치 순위, 각 샘플 뽑으면서 context bm25, dense 점수 표기, context 점수 순 나열 (retrieval가 가져가는 순서 등)
 """
 Retrieval Recall@k 측정 스크립트
 

@@ -451,7 +451,7 @@ def run_mrc(
             # Dynamic Hard Negative 설정
             dhn_k_ret = dhn_config.get("k_ret", data_args.top_k_retrieval)
             dhn_k_read = dhn_config.get("k_read", 3)
-            dhn_alpha = dhn_config.get("alpha", 0.7)
+            dhn_alpha = dhn_config.get("alpha", 0.35)  # base.yaml과 일치
             dhn_use_title = dhn_config.get("use_title", True)
 
             logger.info(

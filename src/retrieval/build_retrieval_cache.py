@@ -38,7 +38,7 @@ from src.retrieval.paths import get_path, ensure_dir
 
 # === 기본 설정 ===
 DEFAULT_K_LARGE = 50  # 캐시에 저장할 최대 개수
-DEFAULT_ALPHA = 0.7  # BM25 가중치
+DEFAULT_ALPHA = 0.35  # BM25 가중치 (base.yaml과 일치)
 
 
 def build_cache_for_split(

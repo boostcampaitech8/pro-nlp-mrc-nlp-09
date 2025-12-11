@@ -52,6 +52,7 @@ def load_retrieval_from_cache(
     dataset: Dataset,
     data_args: DataTrainingArguments,
     alpha: float = 0.35,
+    top_k_override: int = None,
 ) -> Dataset:
     """
     캐시된 retrieval 결과를 로드하여 Dataset을 구성합니다.
@@ -61,12 +62,27 @@ def load_retrieval_from_cache(
         dataset: 원본 dataset (question, answers 등 포함)
         data_args: DataTrainingArguments
         alpha: hybrid score 계산용 BM25 가중치
+        top_k_override: top_k 강제 지정 (None이면 data_args에서 결정)
 
     Returns:
         context가 retrieval 결과로 대체된 Dataset
     """
     import json
     import numpy as np
+
+    # === Top-k 결정 로직 (infer_top_k_retrieval 우선) ===
+    if top_k_override is not None:
+        effective_top_k = top_k_override
+        logger.info(f"🔧 top_k_override specified: {effective_top_k}")
+    else:
+        effective_top_k = (
+            getattr(data_args, "infer_top_k_retrieval", None)
+            or data_args.top_k_retrieval
+        )
+        if getattr(data_args, "infer_top_k_retrieval", None):
+            logger.info(
+                f"🔍 Using infer_top_k_retrieval from config: {effective_top_k}"
+            )
 
     # 캐시 로드
     cache = {}
@@ -105,7 +121,7 @@ def load_retrieval_from_cache(
         "answers": [] if "answers" in dataset.column_names else None,
     }
 
-    top_k = data_args.top_k_retrieval
+    top_k = effective_top_k  # infer_top_k_retrieval 또는 top_k_retrieval 사용
 
     for example in dataset:
         qid = example["id"]

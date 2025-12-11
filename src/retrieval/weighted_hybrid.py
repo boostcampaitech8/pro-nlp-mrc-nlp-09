@@ -13,7 +13,7 @@ Usage:
         tokenize_fn=tokenizer.tokenize,
         corpus_emb_path="./data/kure_corpus_emb.npy",
         passages_meta_path="./data/kure_passages_meta.jsonl",
-        alpha=0.7,  # BM25 가중치
+        alpha=0.35,  # BM25 가중치 (base.yaml과 일치)
     )
     retriever.build()
     df = retriever.retrieve(dataset, topk=20)
@@ -46,7 +46,7 @@ class WeightedHybridRetrieval(BaseRetrieval):
             context_path="wikipedia_documents.json",
             corpus_emb_path="./data/kure_corpus_emb.npy",
             passages_meta_path="./data/kure_passages_meta.jsonl",
-            alpha=0.7,  # BM25:KURE = 0.7:0.3
+            alpha=0.35,  # BM25:KURE = 0.35:0.65 (base.yaml과 일치)
         )
         retriever.build()
         scores, indices = retriever.get_relevant_doc_bulk(queries, k=20)
@@ -63,7 +63,7 @@ class WeightedHybridRetrieval(BaseRetrieval):
         context_path: Optional[str] = None,
         corpus_emb_path: Optional[str] = None,
         passages_meta_path: Optional[str] = None,
-        alpha: float = 0.7,
+        alpha: float = 0.35,  # BM25 가중치 (base.yaml과 일치)
         eps: float = 1e-9,  # 정규화 시 0으로 나누기 방지
         **kwargs,
     ) -> NoReturn:
@@ -74,9 +74,11 @@ class WeightedHybridRetrieval(BaseRetrieval):
             **kwargs,
         )
 
-        # Config에서 hybrid 설정 추출
+        # Config에서 hybrid 설정 추출 (alpha 키 우선, weighted_hybrid_alpha 호환)
         retrieval_config = self.config.get("retrieval", {})
-        self.alpha = retrieval_config.get("weighted_hybrid_alpha", alpha)
+        self.alpha = retrieval_config.get(
+            "alpha", retrieval_config.get("weighted_hybrid_alpha", alpha)
+        )
         self.eps = eps
 
         # 기본 경로 설정

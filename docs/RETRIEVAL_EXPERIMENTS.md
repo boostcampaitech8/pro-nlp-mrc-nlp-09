@@ -96,7 +96,6 @@ batch_size: 64
       "score_dense": 0.5349,
       "score_bm25": 14.9394
     },
-    ...
   ]
 }
 ```
