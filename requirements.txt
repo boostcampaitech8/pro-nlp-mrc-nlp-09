@@ -12,6 +12,8 @@ faiss-gpu-cu12
 
 # retrieval
 bm25s>=0.1.4  # Fast BM25 (NumPy vectorized, 10-100x faster than rank-bm25)
+rank_bm25     # BM25Plus support
+kiwipiepy     # Korean Morphological Analyzer
 sentence-transformers>=2.2.2  # KoE5 dense retrieval
 
 # 사용자 추가 패키지 (재현과 무관)

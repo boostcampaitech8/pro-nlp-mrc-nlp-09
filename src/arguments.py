@@ -129,6 +129,23 @@ class DataTrainingArguments:
             "Only used when inference_split='validation'. Runs inference twice (gold + retrieval)."
         },
     )
+    # --- Reranker & Tokenizer Options ---
+    reranker_name: Optional[str] = field(
+        default=None,
+        metadata={"help": "Model name for Cross-Encoder Reranker (e.g. 'monologg/koelectra-base-v3-discriminator'). If None, no reranking."},
+    )
+    retrieval_tokenizer_name: str = field(
+        default="auto",
+        metadata={"help": "Tokenizer for retrieval: 'auto' (use model's tokenizer) or 'kiwi' (use Kiwi)."},
+    )
+    bm25_impl: str = field(
+        default="bm25s",
+        metadata={"help": "BM25 implementation: 'bm25s' (fast, default) or 'rank_bm25' (supports BM25Plus)."},
+    )
+    bm25_delta: float = field(
+        default=0.5,
+        metadata={"help": "Delta parameter for BM25Plus (only used if bm25_impl='rank_bm25')."},
+    )
     # Dynamic Hard Negative Training 관련 설정 (YAML에서 dynamic_hard_negative 섹션으로 관리)
     # 아래 설정들은 DataTrainingArguments에서 직접 사용하지 않고,
     # YAML의 dynamic_hard_negative 섹션에서 읽어 사용합니다.

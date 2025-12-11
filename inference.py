@@ -230,6 +230,16 @@ def main():
     datasets = load_inference_dataset(data_args, inference_split)
     logger.info(f"📊 Dataset loaded: {datasets}")
 
+    # --- TOKENIZER SETUP (Retrieval specific) ---
+    from src.utils.tokenization import get_tokenizer
+    # model_args.tokenizer_name might be None, so use tokenizer (from AutoTokenizer) as fallback
+    retrieval_tokenize_fn = get_tokenizer(
+        data_args.retrieval_tokenizer_name, 
+        model_tokenizer=AutoTokenizer.from_pretrained(model_args.model_name_or_path, use_fast=True) # Re-instantiate or assume `tokenizer` variable is available later?
+        # `tokenizer` is instantiated later in this script. Let's move this block AFTER tokenizer instantiation?
+        # Or just use the one we are about to create.
+    )
+
     # Validation split일 경우 eval_labels.json 생성 (실험용)
     if inference_split == "validation":
         import json
@@ -255,11 +265,23 @@ def main():
         model_args.tokenizer_name if model_args.tokenizer_name else model_path,
         use_fast=True,
     )
+    
+    # Refresh retrieval tokenizer with the correct model tokenizer if needed
+    if data_args.retrieval_tokenizer_name == "auto":
+        retrieval_tokenize_fn = tokenizer.tokenize
+
     model = AutoModelForQuestionAnswering.from_pretrained(
         model_path,
         from_tf=bool(".ckpt" in model_path),
         config=config,
     )
+    
+    # --- RERANKER SETUP ---
+    reranker = None
+    if data_args.reranker_name:
+        from src.retrieval.reranker import CrossEncoderReranker
+        logger.info(f"🚀 Initializing Reranker: {data_args.reranker_name}")
+        reranker = CrossEncoderReranker(model_name=data_args.reranker_name)
 
     # Config 경로 추출 (YAML 사용 시)
     config_path = (
@@ -304,8 +326,15 @@ def main():
             )
             retriever = get_retriever(
                 retrieval_type=data_args.retrieval_type,
-                tokenize_fn=tokenizer.tokenize,
+                tokenize_fn=retrieval_tokenize_fn,
                 config_path=config_path,
+                # Pass BM25 specific args from data_args if they are not in config (but config usually has them)
+                # But get_retriever reads from config_path inside if provided.
+                # data_args overrides?
+                # Actually BM25Retrieval reads from config_path.
+                # We should pass parameters directly to ensure CLI args work if used.
+                impl=data_args.bm25_impl,
+                delta=data_args.bm25_delta,
             )
             retriever.build()
 
@@ -317,6 +346,7 @@ def main():
                 split_name="test",
                 is_train=False,
                 tokenizer=tokenizer,
+                reranker=reranker, # Pass reranker
             )
 
         datasets = DatasetDict({"validation": new_test_dataset})
@@ -349,7 +379,7 @@ def main():
                 else get_path("train_cache")
             )
 
-            if os.path.exists(cache_path):
+            if os.path.exists(cache_path) and not reranker: # Skip cache if reranker is used (need raw passages)
                 logger.info(f"📦 Using cached retrieval from {cache_path}")
                 new_validation_dataset = load_retrieval_from_cache(
                     cache_path=cache_path,
@@ -359,13 +389,19 @@ def main():
                 )
                 datasets = DatasetDict({"validation": new_validation_dataset})
             else:
-                logger.info(
-                    f"⚠️  Cache not found at {cache_path}, running live retrieval ({data_args.retrieval_type})"
-                )
+                if reranker:
+                    logger.info("⚠️  Reranker enabled: Skipping cache to perform dynamic reranking.")
+                else:
+                    logger.info(
+                        f"⚠️  Cache not found at {cache_path}, running live retrieval ({data_args.retrieval_type})"
+                    )
+                
                 retriever = get_retriever(
                     retrieval_type=data_args.retrieval_type,
-                    tokenize_fn=tokenizer.tokenize,
+                    tokenize_fn=retrieval_tokenize_fn,
                     config_path=config_path,
+                    impl=data_args.bm25_impl,
+                    delta=data_args.bm25_delta,
                 )
                 retriever.build()
 
@@ -377,6 +413,7 @@ def main():
                     split_name="validation",
                     is_train=False,
                     tokenizer=tokenizer,
+                    reranker=reranker, # Pass reranker
                 )
                 datasets = DatasetDict({"validation": new_validation_dataset})
         else:

@@ -112,6 +112,77 @@ def retrieve_and_build_dataset(
     df = df[used_columns].reset_index(drop=True)
     new_dataset = Dataset.from_pandas(df, features=features)
 
+    # --- RERANKING LOGIC ---
+    if kwargs.get("reranker") and has_answers: # Reranking mostly useful when context is retrieved. 
+        # But wait, df already contains 'context'. 
+        # Reranker should ideally run BEFORE constructing the final context if we are selecting top-1 from top-k?
+        # Typically reranker takes top-k retrieved, scores them, and we select top-N (usually smaller).
+        # Here `df` from `retriever.retrieve` already has the top-k documents. 
+        # But `retriever.retrieve` usually joins top-k contexts? 
+        # Let's check `BaseRetrieval.retrieve`. It typically returns a dataframe with 'context' column 
+        # which is a concatenation of top-k passages?
+        # If so, reranking is hard here. Reranking needs individual passages.
+        # I need to check `BaseRetrieval.retrieve` implementation.
+        pass
+    
+    # Actually, `BaseRetrieval.retrieve` returns a DataFrame where 'context' is already the joined string of top-k docs.
+    # This means I CANNOT rerank here easily unless `retrieve` returns candidates.
+    # I need to modify `retrieve_and_build_dataset` to handle reranking differently.
+    # The standard pattern:
+    # 1. get_relevant_doc_bulk -> returns indices/scores
+    # 2. Extract passage texts
+    # 3. Rerank these texts
+    # 4. Select top-N from reranked
+    # 5. Join them into 'context' column
+    
+    # So I shouldn't rely on `retriever.retrieve` which does everything.
+    # I should reproduce what `retriever.retrieve` does but inject reranking.
+    
+    # However, `retriever.retrieve` is convenient.
+    # Let's modify `src/retrieval/base.py` or just do it here manually calling `get_relevant_doc_bulk`.
+    
+    # Since I cannot see `BaseRetrieval` right now in this turn, I will assume I need to manually call `get_relevant_doc_bulk` here if reranker is present.
+    
+    reranker = kwargs.get("reranker")
+    if reranker:
+        logger.info(f"🔄 Reranking retrieved passages using {reranker.model_name}...")
+        
+        # 1. Get initial top-k (maybe larger than final k?)
+        # Let's use data_args.top_k_retrieval for initial, or maybe we need a separate arg 'top_k_rerank'.
+        # For now, let's assume we retrieve top_k * 2 candidates for reranking?
+        # Or just use top_k.
+        initial_k = data_args.top_k_retrieval
+        
+        doc_scores, doc_indices = retriever.get_relevant_doc_bulk(
+            dataset["question"], k=initial_k
+        )
+        
+        final_contexts = []
+        
+        for idx, (scores, indices) in enumerate(zip(doc_scores, doc_indices)):
+            question = dataset[idx]["question"]
+            passages = [retriever.contexts[i] for i in indices]
+            
+            # Rerank
+            rerank_scores = reranker.rerank(question, passages)
+            
+            # Sort by new scores
+            # Zip together: (score, passage_text)
+            scored_passages = list(zip(rerank_scores, passages))
+            scored_passages.sort(key=lambda x: x[0], reverse=True)
+            
+            # Take top-k (or all of them sorted)
+            sorted_passages = [p for _, p in scored_passages]
+            
+            # Join for MRC context
+            final_contexts.append(" ".join(sorted_passages))
+            
+        # Update DataFrame with new contexts
+        df["context"] = final_contexts
+        
+        # Re-create dataset
+        new_dataset = Dataset.from_pandas(df[used_columns], features=features)
+
     # 5. Training일 경우 Answer Realignment 수행
     if is_train and has_answers:
         logger.info("🔄 Realigning answers in retrieved contexts for training...")
