@@ -65,9 +65,12 @@ def get_retriever(
     # BM25 옵션
     k1: float = 1.5,
     b: float = 0.75,
+    delta: float = 0.5, # BM25Plus parameter
+    impl: str = "bm25s", # "bm25s" or "rank_bm25"
     # Hybrid 옵션
     alpha: float = 0.5,
     fusion_method: str = "rrf",
+    dense_retriever_type: str = "koe5", # 새로 추가된 인자
     # 향후 확장: DPR 옵션
     # dpr_question_encoder: Optional[str] = None,
     # dpr_context_encoder: Optional[str] = None,
@@ -170,19 +173,24 @@ def get_retriever(
                 "❌ retrieval_type='hybrid' requires tokenize_fn parameter.\n"
                 "Example: tokenize_fn=tokenizer.tokenize"
             )
-        # corpus_emb_path가 None이면 paths.py 기본값 사용
-        if corpus_emb_path is None:
-            corpus_emb_path = get_path("koe5_corpus_emb")
-            print(f"[Factory] Using default corpus_emb_path: {corpus_emb_path}")
-
+        # corpus_emb_path/passages_meta_path가 None이면 HybridRetrieval 내부에서 기본값 사용
+        # 단, get_path에서 가져오기 전 dense_retriever_type에 따라 경로가 달라질 수 있으므로
+        # 여기서는 corpus_emb_path와 passages_meta_path를 직접 설정하지 않고 전달만 함.
         return HybridRetrieval(
             tokenize_fn=tokenize_fn,
             data_path=data_path,
             context_path=context_path,
-            corpus_emb_path=corpus_emb_path,
+            corpus_emb_path=corpus_emb_path, # 전달
+            passages_meta_path=passages_meta_path, # 전달
             alpha=alpha,
             fusion_method=fusion_method,
+            dense_retriever_type=dense_retriever_type, # 새로 추가된 인자
             config_path=config_path,
+            # BM25 관련 인자도 Hybrid에 전달
+            k1=k1,
+            b=b,
+            delta=delta,
+            impl=impl,
             **kwargs,
         )
 

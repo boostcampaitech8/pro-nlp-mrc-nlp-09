@@ -2,6 +2,16 @@
 MRC 모델 앙상블 (Soft Voting with Weighted Sum)
 
 여러 학습된 모델의 start/end logits를 weighted sum하여 앙상블 수행
+
+사용 예시:
+    # Test 데이터셋 사용 (기본)
+    python ensemble.py --output_dir ./outputs/ensemble/test
+    
+    # Train 데이터셋의 validation 셋 사용
+    python ensemble.py --use_train_validation --train_dataset ./data/train_dataset --output_dir ./outputs/ensemble/validation --no_retrieval
+    
+    # 커맨드라인에서 모델 경로 지정
+    python ensemble.py --model_paths ./outputs/model1 ./outputs/model2 --weights 0.6 0.4
 """
 
 import os
@@ -22,8 +32,11 @@ from transformers import (
     DataCollatorWithPadding,
 )
 
-from src.retrieval.weighted_hybrid import WeightedHybridRetrieval
+from src.retrieval import get_retriever
+from src.retrieval.reranker import CrossEncoderReranker # Reranker 임포트 추가
+from src.utils.tokenization import get_tokenizer
 from src.utils.qa import postprocess_qa_predictions
+from transformers import AutoTokenizer as HFAutoTokenizer
 
 
 # ============================================================
@@ -32,8 +45,10 @@ from src.utils.qa import postprocess_qa_predictions
 ENSEMBLE_MODELS = [
     # (모델 경로, 가중치)
     # 가중치는 자동으로 정규화됩니다 (합이 1이 되도록)
-    ("./outputs/taewon/oceann315", 1.0),
-    ("./outputs/taewon/roberta-large", 1.0),
+    ("/data/ephemeral/home/junbeom/MRC/outputs/teawon/hanteck2", 1.0),
+    ("/data/ephemeral/home/junbeom/MRC/outputs/teawon/oceann2", 1.0),
+    ("/data/ephemeral/home/junbeom/MRC/outputs/teawon/roberta2", 1.0),
+    ("/data/ephemeral/home/junbeom/MRC/outputs/teawon/uomnf2", 1.0),
     # ("./outputs/dahyeong/model", 0.5),
     
     # 💡 가중치 예시:
@@ -50,16 +65,27 @@ class EnsembleConfig:
     model_paths: List[str]          # 모델 경로 리스트
     weights: Optional[List[float]]  # 모델별 가중치 (None이면 균등)
     output_dir: str                 # 결과 저장 경로
-    test_dataset_path: str          # 테스트 데이터셋 경로
+    test_dataset_path: Optional[str] = None  # 테스트 데이터셋 경로
+    train_dataset_path: Optional[str] = None  # 학습 데이터셋 경로 (validation 셋 사용 시)
+    use_train_validation: bool = False  # train_dataset의 validation 셋 사용 여부
     max_seq_length: int = 384
     doc_stride: int = 128
     max_answer_length: int = 30
     top_k_retrieval: int = 10
     batch_size: int = 16
     use_retrieval: bool = True
-    retrieval_alpha: float = 0.35  # WeightedHybridRetrieval의 BM25 가중치 (base.yaml과 동일)
-    corpus_emb_path: Optional[str] = "./data/embeddings/kure_corpus_emb.npy"  # KURE corpus embedding 경로
-    passages_meta_path: Optional[str] = "./data/embeddings/kure_passages_meta.jsonl"  # KURE passages meta 경로
+    retrieval_alpha: float = 0.5  # Hybrid Retrieval의 BM25 가중치
+    retrieval_tokenizer_name: str = "kiwi"  # kiwi or auto
+    bm25_impl: str = "rank_bm25"  # rank_bm25 or bm25s
+    bm25_k1: float = 1.2
+    bm25_b: float = 0.6
+    bm25_delta: float = 0.5
+    fusion_method: str = "rrf"  # rrf or score
+    corpus_emb_path: Optional[str] = None  # KoE5 corpus embedding 경로 (None이면 기본 경로 사용)
+    dense_retriever_type: str = "koe5" # Hybrid 내부에서 사용할 Dense Retriever 타입 ("koe5" or "kure")
+    # Reranker Settings
+    reranker_name: Optional[str] = "BAAI/bge-reranker-v2-m3"
+    rerank_topk: int = 50
 
 
 class MRCEnsemble:
@@ -106,49 +132,135 @@ class MRCEnsemble:
         print(f"\n✅ Total {len(self.models)} models loaded!")
     
     def load_dataset(self) -> DatasetDict:
-        """테스트 데이터셋 로드"""
-        print(f"\n📂 Loading dataset from: {self.config.test_dataset_path}")
-        datasets = load_from_disk(self.config.test_dataset_path)
-        print(f"   Dataset: {datasets}")
+        """데이터셋 로드 (test 또는 train의 validation)"""
+        if self.config.use_train_validation:
+            if self.config.train_dataset_path is None:
+                raise ValueError("❌ use_train_validation=True인 경우 train_dataset_path를 지정해야 합니다.")
+            print(f"\n📂 Loading train dataset from: {self.config.train_dataset_path}")
+            train_datasets = load_from_disk(self.config.train_dataset_path)
+            print(f"   Train dataset splits: {list(train_datasets.keys())}")
+            
+            # validation 셋이 있는지 확인
+            if "validation" not in train_datasets:
+                raise ValueError(
+                    f"❌ train_dataset에 'validation' split이 없습니다.\n"
+                    f"   Available splits: {list(train_datasets.keys())}"
+                )
+            
+            # validation 셋만 사용
+            datasets = DatasetDict({"validation": train_datasets["validation"]})
+            print(f"   ✅ Using validation split: {len(datasets['validation'])} examples")
+        else:
+            if self.config.test_dataset_path is None:
+                raise ValueError("❌ use_train_validation=False인 경우 test_dataset_path를 지정해야 합니다.")
+            print(f"\n📂 Loading test dataset from: {self.config.test_dataset_path}")
+            datasets = load_from_disk(self.config.test_dataset_path)
+            print(f"   Dataset: {datasets}")
+        
         return datasets
     
     def run_retrieval(self, datasets: DatasetDict) -> DatasetDict:
-        """Weighted Hybrid Retrieval 수행 (BM25 + KURE)"""
+        """Hybrid Retrieval 수행 (BM25Plus + KoE5) + Reranking"""
         if not self.config.use_retrieval:
             return datasets
         
-        print("\n🔍 Running Weighted Hybrid Retrieval (BM25 + KURE)...")
+        print("\n🔍 Running Hybrid Retrieval (BM25Plus + KoE5)...")
         
-        # 첫 번째 토크나이저 사용
-        tokenizer = self.tokenizers[0]
+        # Tokenizer 설정
+        print(f"[INIT] Setting up tokenizer: {self.config.retrieval_tokenizer_name}")
+        model_tokenizer = HFAutoTokenizer.from_pretrained("klue/roberta-large")  # Default fallback
+        tokenize_fn = get_tokenizer(self.config.retrieval_tokenizer_name, model_tokenizer)
         
-        # 기본 경로 설정 (base.yaml과 동일)
-        corpus_emb_path = self.config.corpus_emb_path or "./data/embeddings/kure_corpus_emb.npy"
-        passages_meta_path = self.config.passages_meta_path or "./data/embeddings/kure_passages_meta.jsonl"
+        # Hybrid Retrieval 생성
+        print(f"[INIT] Setting up Hybrid Retriever")
+        print(f"       - BM25 Impl: {self.config.bm25_impl} (k1={self.config.bm25_k1}, b={self.config.bm25_b}, delta={self.config.bm25_delta})")
+        print(f"       - Hybrid Alpha: {self.config.retrieval_alpha}")
+        print(f"       - Fusion Method: {self.config.fusion_method}")
+        print(f"       - Dense Retriever Type: {self.config.dense_retriever_type}") # 추가된 부분
         
-        retriever = WeightedHybridRetrieval(
-            tokenize_fn=tokenizer.tokenize,
+        retriever = get_retriever(
+            retrieval_type="hybrid",
+            tokenize_fn=tokenize_fn,
             data_path="./data",
             context_path="wikipedia_documents_normalized.json",
-            corpus_emb_path=corpus_emb_path,
-            passages_meta_path=passages_meta_path,
+            # Hybrid Args
             alpha=self.config.retrieval_alpha,
+            fusion_method=self.config.fusion_method,
+            dense_retriever_type=self.config.dense_retriever_type, # 추가된 부분
+            # BM25 Args
+            impl=self.config.bm25_impl,
+            k1=self.config.bm25_k1,
+            b=self.config.bm25_b,
+            delta=self.config.bm25_delta,
+            # KoE5/Kure Args
+            corpus_emb_path=self.config.corpus_emb_path,
+            passages_meta_path=None, # Kure가 ensemble.py에서 필요하면 추가해줘야 함. 현재는 없음.
+                                     # but get_path() in retrieval/hybrid.py will handle default.
         )
+        
+        print("[INIT] Building retriever index...")
         retriever.build()
         
-        df = retriever.retrieve(
-            datasets["validation"], 
-            topk=self.config.top_k_retrieval
-        )
+        # Reranker 초기화
+        reranker = None
+        if self.config.reranker_name:
+            print(f"[INIT] Setting up Reranker: {self.config.reranker_name}")
+            reranker = CrossEncoderReranker(model_name=self.config.reranker_name)
         
-        # DataFrame을 Dataset으로 변환
-        f = Features({
-            "context": Value(dtype="string", id=None),
-            "id": Value(dtype="string", id=None),
-            "question": Value(dtype="string", id=None),
-        })
+        # Retrieval 수행
+        # Reranker가 있으면 더 많이 가져와서 재정렬
+        top_k = self.config.rerank_topk if reranker else self.config.top_k_retrieval
+        print(f"   - Retrieving top-{top_k} candidates...")
         
-        datasets = DatasetDict({"validation": Dataset.from_pandas(df, features=f)})
+        queries = datasets["validation"]["question"]
+        doc_scores, doc_indices = retriever.get_relevant_doc_bulk(queries, k=top_k)
+        
+        # Context 구성 (Reranking 포함)
+        final_contexts = []
+        print(f"   - Constructing contexts{' (with Reranking)' if reranker else ''}...")
+        
+        for i in tqdm(range(len(queries)), desc="Context Processing"):
+            query = queries[i]
+            indices = doc_indices[i]
+            passages = [retriever.contexts[idx] for idx in indices]
+            
+            if reranker:
+                # Reranking
+                r_scores = reranker.rerank(query, passages)
+                scored = sorted(zip(passages, r_scores), key=lambda x: x[1], reverse=True)
+                # 최종 Top-K 선택
+                selected_passages = [p for p, _ in scored][:self.config.top_k_retrieval]
+                final_contexts.append(" ".join(selected_passages))
+            else:
+                # No Reranking
+                final_contexts.append(" ".join(passages))
+        
+        # Dataset 재구성 (DataFrame 생성 없이 직접)
+        # answers가 있는 경우와 없는 경우 처리
+        data_dict = {
+            "id": datasets["validation"]["id"],
+            "question": queries,
+            "context": final_contexts
+        }
+        
+        if "answers" in datasets["validation"].column_names:
+            data_dict["answers"] = datasets["validation"]["answers"]
+            f = Features({
+                "id": Value(dtype="string"),
+                "question": Value(dtype="string"),
+                "context": Value(dtype="string"),
+                "answers": Sequence(feature={"text": Value(dtype="string"), "answer_start": Value(dtype="int32")})
+            })
+        else:
+            f = Features({
+                "id": Value(dtype="string"),
+                "question": Value(dtype="string"),
+                "context": Value(dtype="string")
+            })
+            
+        new_ds = Dataset.from_dict(data_dict, features=f)
+        datasets = DatasetDict({"validation": new_ds})
+        
         print(f"   ✅ Retrieval complete: {len(datasets['validation'])} examples")
         
         return datasets
@@ -269,6 +381,9 @@ class MRCEnsemble:
         print("🚀 MRC Ensemble (Soft Voting)")
         print("=" * 60)
         
+        dataset_type = "train/validation" if self.config.use_train_validation else "test"
+        print(f"📋 Dataset type: {dataset_type}")
+        
         # 1. 모델 로드
         self.load_models()
         
@@ -276,6 +391,11 @@ class MRCEnsemble:
         datasets = self.load_dataset()
         
         # 3. Retrieval 수행
+        if self.config.use_train_validation and self.config.use_retrieval:
+            print("\n⚠️  Warning: validation 셋 사용 시 일반적으로 retrieval을 사용하지 않습니다.")
+            print("   (validation 셋은 gold context를 포함하고 있습니다)")
+            print("   retrieval을 건너뛰려면 --no_retrieval 플래그를 사용하세요.")
+        
         datasets = self.run_retrieval(datasets)
         
         # 4. 각 모델에서 logits 추출
@@ -308,24 +428,30 @@ class MRCEnsemble:
         
         os.makedirs(self.config.output_dir, exist_ok=True)
         
+        # prefix 설정 (validation 셋인지 test 셋인지 구분)
+        prefix = "ensemble_validation" if self.config.use_train_validation else "ensemble"
+        
         predictions = postprocess_qa_predictions(
             examples=datasets["validation"],
             features=features,
             predictions=(ensembled_start, ensembled_end),
             max_answer_length=self.config.max_answer_length,
             output_dir=self.config.output_dir,
-            prefix="ensemble",
+            prefix=prefix,
         )
         
         # 7. CSV 저장
-        csv_path = os.path.join(self.config.output_dir, "ensemble_predictions.csv")
+        csv_filename = "ensemble_predictions_validation.csv" if self.config.use_train_validation else "ensemble_predictions.csv"
+        csv_path = os.path.join(self.config.output_dir, csv_filename)
         with open(csv_path, "w", encoding="utf-8") as f:
             writer = csv.writer(f, delimiter="\t")
             for key, value in predictions.items():
                 writer.writerow([key, value])
         
         print(f"\n✅ Ensemble complete!")
-        print(f"   📄 Predictions: {os.path.join(self.config.output_dir, 'predictions_ensemble.json')}")
+        dataset_type = "validation" if self.config.use_train_validation else "test"
+        print(f"   📊 Dataset type: {dataset_type}")
+        print(f"   📄 Predictions: {os.path.join(self.config.output_dir, f'predictions_{prefix}.json')}")
         print(f"   📄 CSV: {csv_path}")
         
         return predictions
@@ -349,14 +475,25 @@ def main():
     parser.add_argument(
         "--output_dir",
         type=str,
-        default="./outputs/taewon/ensemble",
+        default="./outputs/taewon/ensemble/3_3_3_1",
         help="결과 저장 경로"
     )
     parser.add_argument(
         "--test_dataset",
         type=str,
         default="./data/test_dataset",
-        help="테스트 데이터셋 경로"
+        help="테스트 데이터셋 경로 (use_train_validation=False일 때 사용)"
+    )
+    parser.add_argument(
+        "--train_dataset",
+        type=str,
+        default=None,
+        help="학습 데이터셋 경로 (use_train_validation=True일 때 사용, validation 셋을 가져옴)"
+    )
+    parser.add_argument(
+        "--use_train_validation",
+        action="store_true",
+        help="train_dataset의 validation 셋 사용 (기본값: False, test_dataset 사용)"
     )
     parser.add_argument(
         "--top_k",
@@ -378,20 +515,56 @@ def main():
     parser.add_argument(
         "--retrieval_alpha",
         type=float,
-        default=0.35,
-        help="WeightedHybridRetrieval의 BM25 가중치 (0~1, 기본값: 0.35, base.yaml과 동일)"
+        default=0.5,
+        help="Hybrid Retrieval의 BM25 가중치 (0~1, 기본값: 0.5)"
+    )
+    parser.add_argument(
+        "--retrieval_tokenizer_name",
+        type=str,
+        default="kiwi",
+        help="Retrieval용 tokenizer (kiwi or auto, 기본값: kiwi)"
+    )
+    parser.add_argument(
+        "--bm25_impl",
+        type=str,
+        default="rank_bm25",
+        help="BM25 구현체 (rank_bm25 or bm25s, 기본값: rank_bm25)"
+    )
+    parser.add_argument(
+        "--bm25_k1",
+        type=float,
+        default=1.2,
+        help="BM25 k1 파라미터 (기본값: 1.2)"
+    )
+    parser.add_argument(
+        "--bm25_b",
+        type=float,
+        default=0.6,
+        help="BM25 b 파라미터 (기본값: 0.6)"
+    )
+    parser.add_argument(
+        "--bm25_delta",
+        type=float,
+        default=0.5,
+        help="BM25Plus delta 파라미터 (기본값: 0.5)"
+    )
+    parser.add_argument(
+        "--fusion_method",
+        type=str,
+        default="rrf",
+        help="Hybrid fusion 방법 (rrf or score, 기본값: rrf)"
     )
     parser.add_argument(
         "--corpus_emb_path",
         type=str,
-        default="./data/embeddings/kure_corpus_emb.npy",
-        help="KURE corpus embedding 경로 (기본값: ./data/embeddings/kure_corpus_emb.npy, base.yaml과 동일)"
+        default=None,
+        help="KoE5 corpus embedding 경로 (None이면 기본 경로 사용)"
     )
     parser.add_argument(
-        "--passages_meta_path",
+        "--dense_retriever_type", # 추가된 인자
         type=str,
-        default="./data/embeddings/kure_passages_meta.jsonl",
-        help="KURE passages meta 경로 (기본값: ./data/embeddings/kure_passages_meta.jsonl, base.yaml과 동일)"
+        default="koe5",
+        help="Hybrid Retrieval 내부에서 사용할 Dense Retriever 타입 (koe5 or kure, 기본값: koe5)"
     )
     
     args = parser.parse_args()
@@ -424,13 +597,21 @@ def main():
         model_paths=model_paths,
         weights=weights,
         output_dir=args.output_dir,
-        test_dataset_path=args.test_dataset,
+        test_dataset_path=args.test_dataset if not args.use_train_validation else None,
+        train_dataset_path=args.train_dataset if args.use_train_validation else None,
+        use_train_validation=args.use_train_validation,
         top_k_retrieval=args.top_k,
         batch_size=args.batch_size,
         use_retrieval=not args.no_retrieval,
         retrieval_alpha=args.retrieval_alpha,
+        retrieval_tokenizer_name=args.retrieval_tokenizer_name,
+        bm25_impl=args.bm25_impl,
+        bm25_k1=args.bm25_k1,
+        bm25_b=args.bm25_b,
+        bm25_delta=args.bm25_delta,
+        fusion_method=args.fusion_method,
         corpus_emb_path=args.corpus_emb_path,
-        passages_meta_path=args.passages_meta_path,
+        dense_retriever_type=args.dense_retriever_type, # 추가된 부분
     )
     
     # 앙상블 실행

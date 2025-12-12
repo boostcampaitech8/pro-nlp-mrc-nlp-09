@@ -16,7 +16,7 @@ from tqdm import tqdm
 
 
 def build_koe5_embeddings(
-    wiki_path: str = "./data/wikipedia_documents.json",
+    wiki_path: str = "./data/wikipedia_documents_normalized.json",
     output_path: str = "./data/koe5_corpus_emb.npy",
     model_name: str = "nlpai-lab/KoE5",
     batch_size: int = 128,

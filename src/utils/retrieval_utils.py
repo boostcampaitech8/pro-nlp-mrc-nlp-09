@@ -112,6 +112,43 @@ def retrieve_and_build_dataset(
     df = df[used_columns].reset_index(drop=True)
     new_dataset = Dataset.from_pandas(df, features=features)
 
+    # --- RERANKING LOGIC ---
+    if kwargs.get("reranker") and has_answers: # Reranking mostly useful when context is retrieved. 
+        pass
+    reranker = kwargs.get("reranker")
+    if reranker:
+        logger.info(f"🔄 Reranking retrieved passages using {reranker.model_name}...")
+
+        initial_k = data_args.top_k_retrieval
+        
+        doc_scores, doc_indices = retriever.get_relevant_doc_bulk(
+            dataset["question"], k=initial_k
+        )
+        
+        final_contexts = []
+        
+        for idx, (scores, indices) in enumerate(zip(doc_scores, doc_indices)):
+            question = dataset[idx]["question"]
+            passages = [retriever.contexts[i] for i in indices]
+            
+            # Rerank
+            rerank_scores = reranker.rerank(question, passages)
+            
+            scored_passages = list(zip(rerank_scores, passages))
+            scored_passages.sort(key=lambda x: x[0], reverse=True)
+            
+            # Take top-k (or all of them sorted)
+            sorted_passages = [p for _, p in scored_passages]
+            
+            # Join for MRC context
+            final_contexts.append(" ".join(sorted_passages))
+            
+        # Update DataFrame with new contexts
+        df["context"] = final_contexts
+        
+        # Re-create dataset
+        new_dataset = Dataset.from_pandas(df[used_columns], features=features)
+
     # 5. Training일 경우 Answer Realignment 수행
     if is_train and has_answers:
         logger.info("🔄 Realigning answers in retrieved contexts for training...")

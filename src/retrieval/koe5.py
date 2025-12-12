@@ -36,7 +36,7 @@ class KoE5Retrieval(BaseRetrieval):
     def __init__(
         self,
         data_path: str = "./data",
-        context_path: str = "wikipedia_documents.json",
+        context_path: str = "wikipedia_documents_normalized.json",
         corpus_emb_path: Optional[str] = None,  # None이면 기본 경로 사용
         model_name: str = "nlpai-lab/KoE5",
         batch_size: int = 128,

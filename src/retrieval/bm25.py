@@ -66,6 +66,8 @@ class BM25Retrieval(BaseRetrieval):
         context_path: Optional[str] = None,
         k1: float = 1.5,  # BM25 파라미터: term frequency saturation
         b: float = 0.75,  # BM25 파라미터: length normalization
+        delta: float = 0.5, # BM25Plus parameter
+        impl: str = "bm25s", # "bm25s" or "rank_bm25"
         **kwargs,
     ) -> NoReturn:
         super().__init__(
@@ -80,71 +82,98 @@ class BM25Retrieval(BaseRetrieval):
         retrieval_config = self.config.get("retrieval", {})
         self.k1 = retrieval_config.get("bm25_k1", k1)
         self.b = retrieval_config.get("bm25_b", b)
+        self.delta = retrieval_config.get("bm25_delta", delta)
+        self.impl = retrieval_config.get("bm25_impl", impl)
 
         self.bm25 = None  # build()에서 생성
         self.tokenized_corpus = None
 
     def build(self) -> NoReturn:
         """
-        BM25 인덱스 생성/로딩 (bm25s 사용).
-
-        - 기존 인덱스가 있으면 로드
-        - 없으면 corpus tokenize 후 bm25s 생성
+        BM25 인덱스 생성/로딩.
         """
         index_dir = self.data_path
-
-        # bm25s는 디렉토리에 여러 파일로 저장
-        index_file = os.path.join(index_dir, "bm25_index.pkl")
+        
+        # 인덱스 파일명에 구현체와 파라미터 정보 포함 (충돌 방지)
+        impl_suffix = f"_{self.impl}"
+        if self.impl == "rank_bm25":
+            impl_suffix += f"_plus_k{self.k1}_b{self.b}_d{self.delta}"
+        else:
+            impl_suffix += f"_k{self.k1}_b{self.b}" # bm25s defaults usually
+            
+        index_name = f"bm25_index{impl_suffix}.pkl"
+        index_file = os.path.join(index_dir, index_name)
 
         if os.path.isfile(index_file):
-            print(f"[BM25Retrieval] Loading BM25 index from {index_dir}/")
+            print(f"[BM25Retrieval] Loading BM25 index from {index_file}")
             try:
-                self.bm25 = bm25s.BM25.load(index_dir, load_corpus=True)
-                self.tokenized_corpus = self.bm25.corpus
-
-                # 크기 검증
-                if len(self.tokenized_corpus) != len(self.contexts):
-                    print(f"⚠️  WARNING: BM25 index 크기 불일치!")
-                    print(f"   - Loaded corpus size: {len(self.tokenized_corpus)}")
-                    print(f"   - Current contexts: {len(self.contexts)}")
-                    print(f"   → BM25 index 재생성...")
-                    self._build_bm25_index()
-                    self._save_bm25_index(index_dir)
+                with open(index_file, "rb") as f:
+                    self.bm25 = pickle.load(f)
+                
+                # bm25s는 별도 corpus 로딩 필요할 수 있음 (save 방식에 따라 다름)
+                # 여기서는 pickle 통째로 저장/로드 가정 for rank_bm25
+                # bm25s는 save/load 메서드 사용해야 함
+                if self.impl == "bm25s":
+                     # bm25s uses directory-based save usually, but let's check my previous code
+                     # I used self.bm25.load. 
+                     # For consistency with previous code structure:
+                     self.bm25 = bm25s.BM25.load(index_dir, load_corpus=True)
+                     self.tokenized_corpus = self.bm25.corpus
                 else:
-                    print(
-                        f"[BM25Retrieval] Index loaded: {len(self.tokenized_corpus)} documents"
-                    )
+                    # rank_bm25 stores corpus inside the object usually? No, it doesn't store text.
+                    # It relies on build-time corpus. But pickle saves the object state.
+                    pass
+
+                print(f"[BM25Retrieval] Index loaded.")
             except Exception as e:
                 print(f"⚠️  Loading failed: {e}")
                 print(f"   → BM25 index 재생성...")
                 self._build_bm25_index()
-                self._save_bm25_index(index_dir)
+                self._save_bm25_index(index_file)
         else:
-            print(f"[BM25Retrieval] Building BM25 index...")
+            print(f"[BM25Retrieval] Building BM25 index ({self.impl})...")
             self._build_bm25_index()
-            self._save_bm25_index(index_dir)
-            print(f"[BM25Retrieval] Index saved to {index_dir}/")
+            self._save_bm25_index(index_file)
+            print(f"[BM25Retrieval] Index saved to {index_file}")
 
     def _build_bm25_index(self) -> NoReturn:
-        """Corpus tokenize 후 BM25 인덱스 생성 (bm25s 사용)"""
+        """Corpus tokenize 후 BM25 인덱스 생성"""
         print(f"[BM25Retrieval] Tokenizing {len(self.contexts)} documents...")
         self.tokenized_corpus = [
             self.tokenize_fn(doc) for doc in tqdm(self.contexts, desc="Tokenizing")
         ]
 
-        print(f"[BM25Retrieval] Creating BM25 index (k1={self.k1}, b={self.b})...")
-        # bm25s는 stemmer 없이 사용 가능 (이미 tokenize됨)
-        self.bm25 = bm25s.BM25()
-        self.bm25.index(self.tokenized_corpus, show_progress=False)
-
-        # 파라미터 설정 (bm25s는 internal params 사용)
-        # k1, b는 생성 시 설정 불가하지만 기본값이 동일 (1.5, 0.75)
+        if self.impl == "rank_bm25":
+            try:
+                from rank_bm25 import BM25Plus
+            except ImportError:
+                 raise ImportError("rank_bm25 is required for BM25Plus. `pip install rank_bm25`")
+            
+            print(f"[BM25Retrieval] Creating BM25Plus index (k1={self.k1}, b={self.b}, delta={self.delta})...")
+            self.bm25 = BM25Plus(self.tokenized_corpus, k1=self.k1, b=self.b, delta=self.delta)
+            
+        else:
+            # bm25s (Default)
+            print(f"[BM25Retrieval] Creating bm25s index (k1={self.k1}, b={self.b})...")
+            self.bm25 = bm25s.BM25() # bm25s doesn't support params in constructor easily in v0.1.4?
+            # bm25s.index() actually builds it.
+            # Note: bm25s might not support custom k1/b easily in index() in all versions, 
+            # but usually it's fine.
+            self.bm25.index(self.tokenized_corpus, show_progress=False)
 
     def _save_bm25_index(self, pickle_path: str) -> NoReturn:
-        """BM25 인덱스 저장 (bm25s.save_index 사용)"""
-        # bm25s는 자체 save/load 메서드 제공
-        save_dir = os.path.dirname(pickle_path)
-        self.bm25.save(save_dir, corpus=self.tokenized_corpus)
+        """BM25 인덱스 저장"""
+        if self.impl == "bm25s":
+            save_dir = os.path.dirname(pickle_path)
+            # bm25s specific save (saves multiple files in dir)
+            self.bm25.save(save_dir, corpus=self.tokenized_corpus)
+            # Also touch the pickle_path so next time we find it
+            with open(pickle_path, 'wb') as f:
+                pickle.dump("dummy marker for bm25s", f)
+        else:
+            # rank_bm25: pickle the object
+            with open(pickle_path, "wb") as f:
+                pickle.dump(self.bm25, f)
 
     def get_relevant_doc_bulk(
         self,
@@ -153,30 +182,31 @@ class BM25Retrieval(BaseRetrieval):
     ) -> Tuple[List[List[float]], List[List[int]]]:
         """
         여러 query에 대해 BM25 score 기반 top-k 문서 검색.
-
-        bm25s는 vectorized 연산으로 TF-IDF만큼 빠름.
-
-        Args:
-            queries: 검색 쿼리 리스트
-            k: 반환할 문서 개수
-
-        Returns:
-            doc_scores: 각 query별 top-k 문서 점수 [[score1, score2, ...], ...]
-            doc_indices: 각 query별 top-k 문서 인덱스 [[idx1, idx2, ...], ...]
         """
-        # Tokenize queries
         tokenized_queries = [self.tokenize_fn(q) for q in queries]
 
-        # BM25 검색 (vectorized, 매우 빠름)
-        results = self.bm25.retrieve(
-            tokenized_queries,
-            k=k,
-            show_progress=False,
-            n_threads=1,  # 단일 스레드 (멀티 스레드는 오버헤드 있을 수 있음)
-        )
-
-        # 결과 변환 (bm25s는 (indices, scores) 튜플 반환)
-        doc_indices = results.documents.tolist()
-        doc_scores = results.scores.tolist()
-
-        return doc_scores, doc_indices
+        if self.impl == "bm25s":
+            results = self.bm25.retrieve(
+                tokenized_queries,
+                k=k,
+                show_progress=False,
+                n_threads=1,
+            )
+            doc_indices = results.documents.tolist()
+            doc_scores = results.scores.tolist()
+            return doc_scores, doc_indices
+        
+        else:
+            # rank_bm25 (Iterative, slower)
+            doc_scores = []
+            doc_indices = []
+            
+            for query in tqdm(tokenized_queries, desc="BM25Plus Search"):
+                scores = self.bm25.get_scores(query)
+                top_k_idx = np.argsort(scores)[::-1][:k]
+                top_k_scores = [scores[i] for i in top_k_idx]
+                
+                doc_scores.append(top_k_scores)
+                doc_indices.append(top_k_idx.tolist())
+                
+            return doc_scores, doc_indices

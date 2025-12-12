@@ -9,27 +9,27 @@ Hybrid Retrieval: BM25 + Dense(KoE5) 결합.
 1. Reciprocal Rank Fusion (RRF): 순위 기반 결합
 2. Score Fusion: 점수 정규화 후 가중합
 """
-
 from typing import List, NoReturn, Optional, Tuple, Callable
 
 import numpy as np
 from tqdm.auto import tqdm
 
-from .base import BaseRetrieval
-from .bm25 import BM25Retrieval
 from .koe5 import KoE5Retrieval
+from .kure import KureRetrieval # KureRetrieval import 추가
+from .bm25 import BM25Retrieval
+from .base import BaseRetrieval
 
 
 class HybridRetrieval(BaseRetrieval):
     """
-    BM25 + KoE5 Hybrid Retrieval.
+    BM25 + Dense Hybrid Retrieval. Dense는 KoE5 또는 Kure 선택 가능.
 
     사용법:
         retriever = HybridRetrieval(
             tokenize_fn=tokenizer.tokenize,
             data_path="./data",
             context_path="wikipedia_documents.json",
-            corpus_emb_path="./data/koe5_corpus_emb.npy",
+            dense_retriever_type="koe5", # 또는 "kure"
             alpha=0.5,  # BM25:Dense = 0.5:0.5
             fusion_method="rrf",  # or "score"
         )
@@ -41,6 +41,7 @@ class HybridRetrieval(BaseRetrieval):
         alpha: BM25 가중치 (0~1). Dense 가중치는 (1-alpha)
         fusion_method: "rrf" (Reciprocal Rank Fusion) or "score" (Score Fusion)
         rrf_k: RRF 파라미터 (기본값 60)
+        dense_retriever_type: 사용할 Dense Retrieval 타입 ("koe5" or "kure")
     """
 
     def __init__(
@@ -50,9 +51,11 @@ class HybridRetrieval(BaseRetrieval):
         data_path: Optional[str] = None,
         context_path: Optional[str] = None,
         corpus_emb_path: Optional[str] = None,
+        passages_meta_path: Optional[str] = None, # KURE를 위해 추가
         alpha: float = 0.5,
         fusion_method: str = "rrf",
         rrf_k: int = 60,
+        dense_retriever_type: str = "koe5", # 새로 추가된 인자
         **kwargs,
     ) -> NoReturn:
         super().__init__(
@@ -67,10 +70,17 @@ class HybridRetrieval(BaseRetrieval):
         self.alpha = retrieval_config.get("hybrid_alpha", alpha)
         self.fusion_method = retrieval_config.get("fusion_method", fusion_method)
         self.rrf_k = retrieval_config.get("rrf_k", rrf_k)
+        self.dense_retriever_type = retrieval_config.get("dense_retriever_type", dense_retriever_type) # config에서 가져오기
 
-        # corpus_emb_path가 None이면 config에서 가져오기
+        # corpus_emb_path가 None이면 config에서 가져오기 (각 dense type에 맞게)
         if corpus_emb_path is None:
-            corpus_emb_path = retrieval_config.get("corpus_emb_path")
+            if self.dense_retriever_type == "koe5":
+                corpus_emb_path = retrieval_config.get("koe5_corpus_emb_path") # koe5 전용 config 키
+            elif self.dense_retriever_type == "kure":
+                corpus_emb_path = retrieval_config.get("kure_corpus_emb_path") # kure 전용 config 키
+            
+        if passages_meta_path is None and self.dense_retriever_type == "kure":
+            passages_meta_path = retrieval_config.get("kure_passages_meta_path")
 
         # BM25 retriever
         self.bm25_retriever = BM25Retrieval(
@@ -80,13 +90,27 @@ class HybridRetrieval(BaseRetrieval):
             **kwargs,
         )
 
-        # Dense retriever (KoE5)
-        self.dense_retriever = KoE5Retrieval(
-            data_path=data_path,
-            context_path=context_path,
-            corpus_emb_path=corpus_emb_path,
-            **kwargs,
-        )
+        # Dense retriever (KoE5 또는 Kure)
+        if self.dense_retriever_type == "koe5":
+            print("[HybridRetrieval] Using KoE5 as dense retriever")
+            self.dense_retriever = KoE5Retrieval(
+                data_path=data_path,
+                context_path=context_path,
+                corpus_emb_path=corpus_emb_path,
+                **kwargs,
+            )
+        elif self.dense_retriever_type == "kure":
+            print("[HybridRetrieval] Using Kure as dense retriever")
+            self.dense_retriever = KureRetrieval(
+                data_path=data_path,
+                context_path=context_path,
+                corpus_emb_path=corpus_emb_path,
+                passages_meta_path=passages_meta_path, # Kure에만 필요
+                **kwargs,
+            )
+        else:
+            raise ValueError(f"Unsupported dense_retriever_type: {self.dense_retriever_type}")
+
 
         print(f"[HybridRetrieval] alpha={self.alpha}, method={self.fusion_method}")
 
