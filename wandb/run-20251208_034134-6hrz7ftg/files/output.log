@@ -1,0 +1,66 @@
+ 33%|███████████████████████████                                                      | 997/2991 [03:49<06:36,  5.03it/s]/data/ephemeral/home/shared/.venv/lib/python3.11/site-packages/transformers/trainer_pt_utils.py:435: FutureWarning: DistributedTensorGatherer is deprecated and will be removed in v5 of Transformers.
+{'loss': 1.3366, 'grad_norm': 16.449201583862305, 'learning_rate': 6.466666666666667e-06, 'epoch': 0.1}
+{'loss': 0.9338, 'grad_norm': 21.047359466552734, 'learning_rate': 1.3133333333333334e-05, 'epoch': 0.2}
+{'loss': 0.8806, 'grad_norm': 2.6811249256134033, 'learning_rate': 1.98e-05, 'epoch': 0.3}
+{'loss': 0.8037, 'grad_norm': 51.78793716430664, 'learning_rate': 1.9279078409513196e-05, 'epoch': 0.4}
+{'loss': 0.8518, 'grad_norm': 26.91224479675293, 'learning_rate': 1.853586027499071e-05, 'epoch': 0.5}
+{'loss': 0.8457, 'grad_norm': 12.970090866088867, 'learning_rate': 1.779264214046823e-05, 'epoch': 0.6}
+{'loss': 0.7467, 'grad_norm': 38.47407913208008, 'learning_rate': 1.7049424005945747e-05, 'epoch': 0.7}
+{'loss': 0.828, 'grad_norm': 17.84651756286621, 'learning_rate': 1.6306205871423265e-05, 'epoch': 0.8}
+{'loss': 0.7779, 'grad_norm': 17.190166473388672, 'learning_rate': 1.5562987736900783e-05, 'epoch': 0.9}
+  warnings.warn(
+100%|█████████████████████████████████████████████████████████████████████████████████| 240/240 [00:01<00:00, 193.76it/s]
+100%|█████████████████████████████████████████████████████████████████████████████████| 240/240 [00:01<00:00, 193.76it/s]
+100%|█████████████████████████████████████████████████████████████████████████████████| 240/240 [00:01<00:00, 192.12it/s]
+{'eval_exact_match': 69.58333333333333, 'eval_f1': 77.48725348725351, 'epoch': 1.0}
+{'loss': 0.7423, 'grad_norm': 10.47457218170166, 'learning_rate': 1.48197696023783e-05, 'epoch': 1.0}
+{'loss': 0.3942, 'grad_norm': 1.6350781917572021, 'learning_rate': 1.4083983649201041e-05, 'epoch': 1.1}
+{'loss': 0.3486, 'grad_norm': 39.79740905761719, 'learning_rate': 1.334076551467856e-05, 'epoch': 1.2}
+{'loss': 0.4161, 'grad_norm': 71.94654083251953, 'learning_rate': 1.2597547380156077e-05, 'epoch': 1.3}
+{'loss': 0.3259, 'grad_norm': 31.93522834777832, 'learning_rate': 1.1854329245633594e-05, 'epoch': 1.4}
+{'loss': 0.4497, 'grad_norm': 24.443330764770508, 'learning_rate': 1.1111111111111113e-05, 'epoch': 1.5}
+{'loss': 0.3802, 'grad_norm': 60.831016540527344, 'learning_rate': 1.036789297658863e-05, 'epoch': 1.6}
+{'loss': 0.4247, 'grad_norm': 1.9263542890548706, 'learning_rate': 9.624674842066148e-06, 'epoch': 1.71}
+{'loss': 0.298, 'grad_norm': 1.505713701248169, 'learning_rate': 8.881456707543666e-06, 'epoch': 1.81}
+{'loss': 0.4104, 'grad_norm': 0.22497311234474182, 'learning_rate': 8.138238573021182e-06, 'epoch': 1.91}
+100%|████████████████████████████████████████████████████████████████████████████████| 2991/2991 [11:42<00:00,  4.26it/s]
+{'eval_exact_match': 68.33333333333333, 'eval_f1': 76.88060666185669, 'epoch': 2.0}
+{'loss': 0.3297, 'grad_norm': 0.21463730931282043, 'learning_rate': 7.3950204384987e-06, 'epoch': 2.01}
+{'loss': 0.15, 'grad_norm': 0.03775212913751602, 'learning_rate': 6.651802303976218e-06, 'epoch': 2.11}
+{'loss': 0.185, 'grad_norm': 0.007046149577945471, 'learning_rate': 5.9085841694537345e-06, 'epoch': 2.21}
+{'loss': 0.1538, 'grad_norm': 1.4775413274765015, 'learning_rate': 5.1653660349312525e-06, 'epoch': 2.31}
+{'loss': 0.1789, 'grad_norm': 0.9988121390342712, 'learning_rate': 4.4221479004087706e-06, 'epoch': 2.41}
+{'loss': 0.1229, 'grad_norm': 0.0830097571015358, 'learning_rate': 3.6789297658862878e-06, 'epoch': 2.51}
+{'loss': 0.1943, 'grad_norm': 73.29549407958984, 'learning_rate': 2.935711631363806e-06, 'epoch': 2.61}
+{'loss': 0.1371, 'grad_norm': 127.19298553466797, 'learning_rate': 2.192493496841323e-06, 'epoch': 2.71}
+{'loss': 0.183, 'grad_norm': 23.067035675048828, 'learning_rate': 1.4492753623188408e-06, 'epoch': 2.81}
+{'loss': 0.148, 'grad_norm': 11.543105125427246, 'learning_rate': 7.060572277963583e-07, 'epoch': 2.91}
+100%|█████████████████████████████████████████████████████████████████████████████████| 240/240 [00:01<00:00, 191.92it/s]
+{'eval_exact_match': 68.75, 'eval_f1': 77.59672619047622, 'epoch': 3.0}
+{'train_runtime': 709.5964, 'train_samples_per_second': 33.695, 'train_steps_per_second': 4.215, 'train_loss': 0.4717175526110395, 'epoch': 3.0}
+03:53:18 | INFO     | Training completed.
+03:53:18 | INFO     | Saving model to ./outputs/sehun/clean1
+03:53:18 | INFO     | 최종 훈련 결과: {'train_runtime': 709.5964, 'train_samples_per_second': 33.695, 'train_steps_per_second': 4.215, 'train_loss': 0.4717175526110395, 'epoch': 3.0}
+***** train metrics *****
+  epoch                    =        3.0
+  train_loss               =     0.4717
+  train_runtime            = 0:11:49.59
+  train_samples            =       7970
+  train_samples_per_second =     33.695
+  train_steps_per_second   =      4.215
+03:53:21 | INFO     | ***** Train results *****
+03:53:21 | INFO     |   epoch = 3.0
+03:53:21 | INFO     |   train_loss = 0.4717175526110395
+03:53:21 | INFO     |   train_runtime = 709.5964
+03:53:21 | INFO     |   train_samples = 7970
+03:53:21 | INFO     |   train_samples_per_second = 33.695
+03:53:21 | INFO     |   train_steps_per_second = 4.215
+03:53:21 | INFO     | Running final evaluation on validation set (474 examples)
+03:53:21 | INFO     | Best metric: None
+03:53:21 | INFO     | Best model checkpoint: None
+100%|████████████████████████████████████████████████████████████████████████████████████| 60/60 [00:05<00:00, 10.88it/s]
+***** eval metrics *****
+  epoch            =     3.0
+  eval_exact_match =   68.75
+  eval_f1          = 77.5967
+  eval_samples     =     474

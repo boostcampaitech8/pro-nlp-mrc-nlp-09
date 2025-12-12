@@ -1,0 +1,127 @@
+                                                                                                                         
+{'loss': 6.3796, 'grad_norm': inf, 'learning_rate': 0.0, 'epoch': 0.0}
+{'loss': 5.9154, 'grad_norm': 24.693960189819336, 'learning_rate': 2.149122807017544e-06, 'epoch': 0.02}
+{'loss': 2.7894, 'grad_norm': 4.69605016708374, 'learning_rate': 4.342105263157895e-06, 'epoch': 0.04}
+{'loss': 2.1477, 'grad_norm': 35.40088653564453, 'learning_rate': 6.535087719298246e-06, 'epoch': 0.07}
+{'loss': 0.9067, 'grad_norm': 29.68226432800293, 'learning_rate': 8.728070175438597e-06, 'epoch': 0.09}
+{'loss': 0.5196, 'grad_norm': 25.887012481689453, 'learning_rate': 1.0921052631578948e-05, 'epoch': 0.11}
+{'loss': 0.4287, 'grad_norm': 8.391529083251953, 'learning_rate': 1.3114035087719299e-05, 'epoch': 0.13}
+{'loss': 0.3577, 'grad_norm': 9.5838623046875, 'learning_rate': 1.530701754385965e-05, 'epoch': 0.15}
+{'loss': 0.4129, 'grad_norm': 5.071966648101807, 'learning_rate': 1.7500000000000002e-05, 'epoch': 0.18}
+{'loss': 0.2779, 'grad_norm': 8.141687393188477, 'learning_rate': 1.969298245614035e-05, 'epoch': 0.2}
+{'loss': 0.3469, 'grad_norm': 5.9034247398376465, 'learning_rate': 2.18859649122807e-05, 'epoch': 0.22}
+{'loss': 0.3579, 'grad_norm': 3.5688869953155518, 'learning_rate': 2.4078947368421056e-05, 'epoch': 0.24}
+{'loss': 0.3889, 'grad_norm': 0.2827545702457428, 'learning_rate': 2.6271929824561405e-05, 'epoch': 0.26}
+{'loss': 0.3391, 'grad_norm': 24.412853240966797, 'learning_rate': 2.8464912280701754e-05, 'epoch': 0.29}
+{'loss': 0.4055, 'grad_norm': 14.056588172912598, 'learning_rate': 2.992686494392979e-05, 'epoch': 0.31}
+{'loss': 0.3122, 'grad_norm': 8.0072021484375, 'learning_rate': 2.968308142369576e-05, 'epoch': 0.33}
+{'loss': 0.3049, 'grad_norm': 0.418674111366272, 'learning_rate': 2.943929790346173e-05, 'epoch': 0.35}
+{'loss': 0.3714, 'grad_norm': 0.9588842988014221, 'learning_rate': 2.9195514383227694e-05, 'epoch': 0.37}
+{'loss': 0.3329, 'grad_norm': 17.450237274169922, 'learning_rate': 2.895173086299366e-05, 'epoch': 0.39}
+{'loss': 0.357, 'grad_norm': 11.832545280456543, 'learning_rate': 2.8707947342759633e-05, 'epoch': 0.42}
+{'loss': 0.3185, 'grad_norm': 13.621428489685059, 'learning_rate': 2.8464163822525597e-05, 'epoch': 0.44}
+{'loss': 0.3351, 'grad_norm': 29.986970901489258, 'learning_rate': 2.8220380302291565e-05, 'epoch': 0.46}
+{'loss': 0.3568, 'grad_norm': 1.8216722011566162, 'learning_rate': 2.7976596782057536e-05, 'epoch': 0.48}
+{'loss': 0.3228, 'grad_norm': 18.290828704833984, 'learning_rate': 2.7732813261823504e-05, 'epoch': 0.5}
+{'loss': 0.2923, 'grad_norm': 1.6263060569763184, 'learning_rate': 2.7489029741589468e-05, 'epoch': 0.53}
+{'loss': 0.2983, 'grad_norm': 5.103950500488281, 'learning_rate': 2.7245246221355436e-05, 'epoch': 0.55}
+{'loss': 0.3206, 'grad_norm': 23.502077102661133, 'learning_rate': 2.7001462701121407e-05, 'epoch': 0.57}
+{'loss': 0.3104, 'grad_norm': 4.163444519042969, 'learning_rate': 2.675767918088737e-05, 'epoch': 0.59}
+{'loss': 0.2794, 'grad_norm': 3.8018879890441895, 'learning_rate': 2.651389566065334e-05, 'epoch': 0.61}
+{'loss': 0.3224, 'grad_norm': 9.191514015197754, 'learning_rate': 2.627011214041931e-05, 'epoch': 0.64}
+{'loss': 0.2106, 'grad_norm': 3.902803659439087, 'learning_rate': 2.6026328620185274e-05, 'epoch': 0.66}
+{'loss': 0.2297, 'grad_norm': 21.408157348632812, 'learning_rate': 2.5782545099951242e-05, 'epoch': 0.68}
+{'loss': 0.3572, 'grad_norm': 9.207003593444824, 'learning_rate': 2.5538761579717213e-05, 'epoch': 0.7}
+{'loss': 0.2935, 'grad_norm': 2.395312547683716, 'learning_rate': 2.529497805948318e-05, 'epoch': 0.72}
+{'loss': 0.2596, 'grad_norm': 6.503350257873535, 'learning_rate': 2.5051194539249145e-05, 'epoch': 0.75}
+{'loss': 0.2638, 'grad_norm': 0.04006483405828476, 'learning_rate': 2.4807411019015116e-05, 'epoch': 0.77}
+{'loss': 0.271, 'grad_norm': 5.91987419128418, 'learning_rate': 2.4563627498781084e-05, 'epoch': 0.79}
+{'loss': 0.3327, 'grad_norm': 11.897794723510742, 'learning_rate': 2.431984397854705e-05, 'epoch': 0.81}
+{'loss': 0.3416, 'grad_norm': 10.204978942871094, 'learning_rate': 2.407606045831302e-05, 'epoch': 0.83}
+{'loss': 0.3227, 'grad_norm': 0.028232431039214134, 'learning_rate': 2.3832276938078987e-05, 'epoch': 0.86}
+{'loss': 0.2836, 'grad_norm': 11.361973762512207, 'learning_rate': 2.358849341784495e-05, 'epoch': 0.88}
+{'loss': 0.2435, 'grad_norm': 2.3410592079162598, 'learning_rate': 2.3344709897610923e-05, 'epoch': 0.9}
+{'loss': 0.2579, 'grad_norm': 11.947736740112305, 'learning_rate': 2.310092637737689e-05, 'epoch': 0.92}
+{'loss': 0.2183, 'grad_norm': 1.6881970167160034, 'learning_rate': 2.2857142857142858e-05, 'epoch': 0.94}
+{'loss': 0.2956, 'grad_norm': 17.103300094604492, 'learning_rate': 2.2613359336908826e-05, 'epoch': 0.97}
+{'loss': 0.2461, 'grad_norm': 22.48394775390625, 'learning_rate': 2.2369575816674793e-05, 'epoch': 0.99}
+  warnings.warn(
+Traceback (most recent call last):
+  File "/root/MRC/train.py", line 633, in <module>
+    main()
+  File "/root/MRC/train.py", line 146, in main
+    run_mrc(data_args, training_args, model_args, datasets, tokenizer, model)
+  File "/root/MRC/train.py", line 436, in run_mrc
+    train_result = trainer.train(
+                   ^^^^^^^^^^^^^^
+  File "/data/ephemeral/home/shared/.venv/lib/python3.11/site-packages/transformers/trainer.py", line 2325, in train
+    return inner_training_loop(
+           ^^^^^^^^^^^^^^^^^^^^
+  File "/data/ephemeral/home/shared/.venv/lib/python3.11/site-packages/transformers/trainer.py", line 2790, in _inner_training_loop
+    self._maybe_log_save_evaluate(
+  File "/data/ephemeral/home/shared/.venv/lib/python3.11/site-packages/transformers/trainer.py", line 3221, in _maybe_log_save_evaluate
+    metrics = self._evaluate(trial, ignore_keys_for_eval)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data/ephemeral/home/shared/.venv/lib/python3.11/site-packages/transformers/trainer.py", line 3170, in _evaluate
+    metrics = self.evaluate(ignore_keys=ignore_keys_for_eval)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/MRC/src/trainer_qa.py", line 47, in evaluate
+    output = self.prediction_loop(
+             ^^^^^^^^^^^^^^^^^^^^^
+  File "/data/ephemeral/home/shared/.venv/lib/python3.11/site-packages/transformers/trainer.py", line 5298, in prediction_loop
+    for step, inputs in enumerate(dataloader):
+  File "/data/ephemeral/home/shared/.venv/lib/python3.11/site-packages/accelerate/data_loader.py", line 567, in __iter__
+    current_batch = next(dataloader_iter)
+                    ^^^^^^^^^^^^^^^^^^^^^
+  File "/data/ephemeral/home/shared/.venv/lib/python3.11/site-packages/torch/utils/data/dataloader.py", line 732, in __next__
+    data = self._next_data()
+           ^^^^^^^^^^^^^^^^^
+  File "/data/ephemeral/home/shared/.venv/lib/python3.11/site-packages/torch/utils/data/dataloader.py", line 1506, in _next_data
+    return self._process_data(data, worker_id)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data/ephemeral/home/shared/.venv/lib/python3.11/site-packages/torch/utils/data/dataloader.py", line 1541, in _process_data
+    data.reraise()
+  File "/data/ephemeral/home/shared/.venv/lib/python3.11/site-packages/torch/_utils.py", line 769, in reraise
+    raise exception
+ValueError: Caught ValueError in DataLoader worker process 0.
+Original Traceback (most recent call last):
+  File "/data/ephemeral/home/shared/.venv/lib/python3.11/site-packages/transformers/tokenization_utils_base.py", line 796, in convert_to_tensors
+    tensor = as_tensor(value)
+             ^^^^^^^^^^^^^^^^
+  File "/data/ephemeral/home/shared/.venv/lib/python3.11/site-packages/transformers/tokenization_utils_base.py", line 741, in as_tensor
+    if len(flatten(value)) == 0 and dtype is None:
+           ^^^^^^^^^^^^^^
+  File "/data/ephemeral/home/shared/.venv/lib/python3.11/site-packages/transformers/tokenization_utils_base.py", line 96, in flatten
+    res.extend(flatten(sub_arr))
+               ^^^^^^^^^^^^^^^^
+  File "/data/ephemeral/home/shared/.venv/lib/python3.11/site-packages/transformers/tokenization_utils_base.py", line 96, in flatten
+    res.extend(flatten(sub_arr))
+               ^^^^^^^^^^^^^^^^
+  File "/data/ephemeral/home/shared/.venv/lib/python3.11/site-packages/transformers/tokenization_utils_base.py", line 93, in flatten
+    if len(arr) > 0:
+       ^^^^^^^^
+TypeError: object of type 'int' has no len()
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/data/ephemeral/home/shared/.venv/lib/python3.11/site-packages/torch/utils/data/_utils/worker.py", line 349, in _worker_loop
+    data = fetcher.fetch(index)  # type: ignore[possibly-undefined]
+           ^^^^^^^^^^^^^^^^^^^^
+  File "/data/ephemeral/home/shared/.venv/lib/python3.11/site-packages/torch/utils/data/_utils/fetch.py", line 55, in fetch
+    return self.collate_fn(data)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/data/ephemeral/home/shared/.venv/lib/python3.11/site-packages/transformers/data/data_collator.py", line 271, in __call__
+    batch = pad_without_fast_tokenizer_warning(
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data/ephemeral/home/shared/.venv/lib/python3.11/site-packages/transformers/data/data_collator.py", line 66, in pad_without_fast_tokenizer_warning
+    padded = tokenizer.pad(*pad_args, **pad_kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data/ephemeral/home/shared/.venv/lib/python3.11/site-packages/transformers/tokenization_utils_base.py", line 3592, in pad
+    return BatchEncoding(batch_outputs, tensor_type=return_tensors)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data/ephemeral/home/shared/.venv/lib/python3.11/site-packages/transformers/tokenization_utils_base.py", line 249, in __init__
+    self.convert_to_tensors(tensor_type=tensor_type, prepend_batch_axis=prepend_batch_axis)
+  File "/data/ephemeral/home/shared/.venv/lib/python3.11/site-packages/transformers/tokenization_utils_base.py", line 812, in convert_to_tensors
+    raise ValueError(
+ValueError: Unable to create tensor, you should probably activate truncation and/or padding with 'padding=True' 'truncation=True' to have batched tensors with the same length. Perhaps your features (`input_ids` in this case) have excessive nesting (inputs type `list` where type `int` is expected).
