@@ -1,0 +1,82 @@
+# model, data는 arguments.py에 지정된 dataclass 형식에 맞게 작성하면 됩니다. (값 미기재 시 default 값 사용)
+# training은 TrainingArguments 형식에 맞게 작성하면 됩니다. (HF transformers 제공)
+# base.yaml 기준으로 configs/exp/exp_name.yaml 파일을 만들고 실험별 설정을 관리하시면 됩니다.
+
+# 모드는 스크립트에서 강제 세팅 (train.py: do_train=True, do_eval=True)
+# do_train / do_eval / do_predict 여기서 설정 불필요
+
+##################################
+# --- model (ModelArguments) ---
+##################################
+model_name_or_path: ./outputs/taewon/uomnf1  # 사전학습 모델 또는 checkpoint 경로
+# config_name: null         # 모델과 동일하면 생략 가능
+# tokenizer_name: null      # 모델과 동일하면 생략 가능
+
+# [Inference 전용 설정]
+use_trained_model: true     # inference 시 output_dir에서 best checkpoint 자동 탐색
+#                           # false로 설정하면 model_name_or_path의 pretrained model 직접 사용
+
+
+##################################
+# --- data (DataTrainingArguments) ---
+##################################
+train_dataset_name: ./data/train_dataset_with_negatives     # train에서 사용하는 데이터셋 (train + validation split 포함)
+infer_dataset_name: ./data/test_dataset      # test split 데이터셋 (제출용, 정답 없음)
+
+overwrite_cache: false
+preprocessing_num_workers: 4
+max_seq_length: 384
+pad_to_max_length: false
+doc_stride: 128
+max_answer_length: 30
+
+# retrieval 관련
+eval_retrieval: False         # inference 시 retrieval 사용 여부
+num_clusters:
+top_k_retrieval: 10
+use_faiss: false
+
+# [Inference 전용 설정]
+# ⚠️ 중요: Split별 정책
+# - test: gold context 없음 → eval_retrieval=True 필수 (자동 검증)
+# - validation: gold context 있음 → eval_retrieval 선택 가능
+# - train: gold context 있음 → eval_retrieval 선택 가능
+inference_split: test        # 추론할 데이터 선택 (train/validation/test)
+                             # - train: train_dataset의 train split 사용 (do_eval + do_predict)
+                             # - validation: train_dataset의 validation split 사용 (do_eval + do_predict)
+                             # - test: infer_dataset_name 사용 (do_predict만, 제출용, 기본값)
+
+# 💡 compare_retrieval은 validation 전용 기능
+# gold context vs retrieval context 성능 비교 (비용 클 수도 있음 필요시만 true)
+compare_retrieval: false     # validation에서만 사용, test는 이미 retrieval 필수
+
+##################################
+# --- training (TrainingArguments) ---
+##################################
+output_dir: ./outputs/taewon/uomnf2  # {username} 부분을 본인 이름으로 변경 권장
+num_train_epochs: 2
+per_device_train_batch_size: 16          # 3952 / 16 = 247 steps/epoch
+per_device_eval_batch_size: 16
+learning_rate: 2.0e-5
+warmup_ratio: 0.1699                         # ~74 steps warmup
+weight_decay: 0.01601
+
+# logging & save 전략 (247 steps/epoch 기준)
+logging_steps: 50
+logging_first_step: true
+eval_strategy: epoch                      # 에포크마다 평가
+save_strategy: epoch                      # 에포크마다 저장
+save_total_limit: 1                       # 💾 best checkpoint 1개만 유지 (용량 절약)
+save_only_model: true                     # 💾 model만 저장 (optimizer.pt, scheduler.pt 저장 안함)
+load_best_model_at_end: true              # ⭐ 학습 종료 시 best checkpoint 자동 로드
+metric_for_best_model: "exact_match"      # ⭐ EM 기준으로 best model 선택
+greater_is_better: true                   # ⭐ EM이 높을수록 좋음
+save_safetensors: true                    # safetensors 형식으로 저장 (권장, 더 안전하고 빠름)
+
+# 기타 설정
+fp16: # 큰 모델 양자화
+dataloader_num_workers: 2
+gradient_accumulation_steps: 1
+resume_from_checkpoint:
+
+

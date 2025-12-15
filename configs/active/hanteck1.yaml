@@ -1,0 +1,95 @@
+# KURE + BM25 Hybrid Retrieval - VANILLA Training (No DHN)
+# Base Model: HANTAEK/klue-roberta-large-korquad-v1-qa-finetuned
+# 
+# DHN을 비활성화하고 Gold Context로만 학습
+# Date: 2025-12-10
+
+##################################
+# --- model (ModelArguments) ---
+##################################
+model_name_or_path: HANTAEK/klue-roberta-large-korquad-v1-qa-finetuned
+
+##################################
+# --- data (DataTrainingArguments) ---
+##################################
+train_dataset_name: ./data/train_dataset_clean
+infer_dataset_name: ./data/test_dataset
+
+overwrite_cache: false
+preprocessing_num_workers: 4
+max_seq_length: 384
+pad_to_max_length: false
+doc_stride: 128
+max_answer_length: 30
+
+# Retrieval 설정 (Validation에서만 retrieval 사용)
+eval_retrieval: False        # Validation에서 retrieved context 사용
+train_retrieval: false      # Train에서는 Gold context 사용
+retrieval_type: weighted_hybrid
+top_k_retrieval: 10
+use_faiss: false
+
+# Inference split (test로 제출 파일 생성)
+inference_split: test
+
+##################################
+# --- retrieval ---
+##################################
+retrieval:
+  data_path: ./data
+  context_path: wikipedia_documents.json
+  alpha: 0.35                               # BM25 35% + KURE 65% (최적값)
+  
+  # KURE Dense
+  corpus_emb_path: ./data/embeddings/kure_corpus_emb.npy
+  passages_meta_path: ./data/embeddings/kure_passages_meta.jsonl
+  
+  # 캐시 경로
+  cache_dir: ./data/cache/retrieval
+  train_cache: ./data/cache/retrieval/train_top50.jsonl
+  val_cache: ./data/cache/retrieval/val_top50.jsonl
+  test_cache: ./data/cache/retrieval/test_top50.jsonl
+
+##################################
+# --- dynamic_hard_negative ---
+##################################
+dynamic_hard_negative:
+  enabled: false    # ← DHN 비활성화! Gold context로만 학습
+  # k_ret: 20       # 사용 안 함
+  # k_read: 3       # 사용 안 함
+  # alpha: 0.35     # 사용 안 함
+  # use_title: false # 사용 안 함
+
+##################################
+# --- training (TrainingArguments) ---
+##################################
+output_dir: ./outputs/taewon/hanteck1
+do_train: true
+do_eval: true
+seed: 42
+
+# Hyperparameters
+per_device_train_batch_size: 8
+per_device_eval_batch_size: 16
+gradient_accumulation_steps: 2    # Effective batch size = 16
+
+learning_rate: 2.0e-5
+weight_decay: 0.01
+num_train_epochs: 1
+warmup_ratio: 0.1
+
+# Logging & Save
+logging_steps: 100
+logging_first_step: true
+eval_strategy: epoch
+save_strategy: epoch
+save_total_limit: 2
+save_only_model: true
+load_best_model_at_end: true
+metric_for_best_model: exact_match
+greater_is_better: true
+save_safetensors: true
+
+# Performance
+fp16: true
+dataloader_num_workers: 2
