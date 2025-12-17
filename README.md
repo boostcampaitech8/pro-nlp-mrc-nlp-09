@@ -24,7 +24,7 @@ Question Answering (QA)은 다양한 종류의 질문에 대해 대답하는 인
 | **박준범** | MRC 모델 리서치 및 실험, Retrieval 모델 리서치 및 실험(Reranking) |
 | **이태원** | MRC 모델 리서치 및 실험, 하이퍼파라미터 튜닝, 데이터 후처리, tapt, 앙상블 |
 | **김세훈** | EDA, 데이터 전처리, 데이터 후처리,  데이터 증강(negative Sampling) |
-| **강승환** | EDA, 앙상블 |
+| **허승환** | EDA, 앙상블 |
 
 ## ⚙ 환경
 - GPU : V100 32GB 3대
@@ -60,3 +60,4 @@ BM25(sparse) + dense의 hybrid score로 top-k 문서 선별
 - **최종 순위** : **7위** (EM : 68.6100% / 79.87%) / 16팀
 
 ## 📁 구조 소개
+
