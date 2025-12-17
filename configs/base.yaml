@@ -1,27 +1,29 @@
-# model, data는 arguments.py에 지정된 dataclass 형식에 맞게 작성하면 됩니다. (값 미기재 시 default 값 사용)
-# training은 TrainingArguments 형식에 맞게 작성하면 됩니다. (HF transformers 제공)
-# base.yaml 기준으로 configs/exp/exp_name.yaml 파일을 만들고 실험별 설정을 관리하시면 됩니다.
-
-# 모드는 스크립트에서 강제 세팅 (train.py: do_train=True, do_eval=True)
-# do_train / do_eval / do_predict 여기서 설정 불필요
+# MRC (ODQA) 프로젝트 기본 설정 템플릿
+# ================================================
+# 모든 실험 설정은 이 파일을 기반으로 configs/active/에 생성합니다.
+# 
+# Retrieval Pipeline: KURE + BM25 Weighted Hybrid (캐시 기반)
+# Training: Dynamic Hard Negative Sampling (DHN)
+# 
+# 마지막 업데이트: 2025-12-10
 
 ##################################
 # --- model (ModelArguments) ---
 ##################################
-model_name_or_path: klue/bert-base # 사전학습 모델 또는 checkpoint 경로
-# config_name: null         # 모델과 동일하면 생략 가능
-# tokenizer_name: null      # 모델과 동일하면 생략 가능
+model_name_or_path: klue/bert-base          # 사전학습 모델 또는 checkpoint 경로
+# config_name: null                         # 모델과 동일하면 생략 가능
+# tokenizer_name: null                      # 모델과 동일하면 생략 가능
 
 # [Inference 전용 설정]
-use_trained_model: true     # inference 시 output_dir에서 best checkpoint 자동 탐색
-#                           # false로 설정하면 model_name_or_path의 pretrained model 직접 사용
+use_trained_model: true                     # inference 시 output_dir에서 best checkpoint 자동 탐색
+                                            # false로 설정하면 model_name_or_path의 pretrained model 직접 사용
 
 
 ##################################
 # --- data (DataTrainingArguments) ---
 ##################################
-train_dataset_name: ./data/train_dataset     # train에서 사용하는 데이터셋 (train + validation split 포함)
-infer_dataset_name: ./data/test_dataset      # test split 데이터셋 (제출용, 정답 없음)
+train_dataset_name: ./data/train_dataset    # train에서 사용하는 데이터셋 (train + validation split 포함)
+infer_dataset_name: ./data/test_dataset     # test split 데이터셋 (제출용, 정답 없음)
 
 overwrite_cache: false
 preprocessing_num_workers: 4
@@ -30,57 +32,103 @@ pad_to_max_length: false
 doc_stride: 128
 max_answer_length: 30
 
-# retrieval 관련
-eval_retrieval: true         # inference 시 retrieval 사용 여부
-num_clusters:
-top_k_retrieval: 10
-use_faiss: false
+# === Retrieval 설정 ===
+# 기본값: KURE + BM25 Weighted Hybrid (최적화됨)
+eval_retrieval: true                        # inference 시 retrieval 사용 여부
+train_retrieval: false                      # train은 DHN으로 대체 (dynamic_hard_negative.enabled=true 시)
+retrieval_type: weighted_hybrid             # sparse, dense, bm25, koe5, kure, hybrid, weighted_hybrid
+top_k_retrieval: 10                         # inference 시 상위 k개 문서 사용
+use_faiss: false                            # FAISS 사용 여부 (false면 exhaustive search)
+num_clusters: 64                            # FAISS 클러스터 수 (use_faiss=true일 때만)
 
 # [Inference 전용 설정]
-# ⚠️ 중요: Split별 정책
-# - test: gold context 없음 → eval_retrieval=True 필수 (자동 검증)
-# - validation: gold context 있음 → eval_retrieval 선택 가능
-# - train: gold context 있음 → eval_retrieval 선택 가능
-inference_split: test        # 추론할 데이터 선택 (train/validation/test)
-                             # - train: train_dataset의 train split 사용 (do_eval + do_predict)
-                             # - validation: train_dataset의 validation split 사용 (do_eval + do_predict)
-                             # - test: infer_dataset_name 사용 (do_predict만, 제출용, 기본값)
+# ⚠️ Split별 정책:
+#   - test: gold context 없음 → eval_retrieval=True 필수 (자동 검증)
+#   - validation: gold context 있음 → eval_retrieval 선택 가능
+#   - train: gold context 있음 → eval_retrieval 선택 가능
+inference_split: test                       # 추론 대상: train / validation / test
 
-# 💡 compare_retrieval은 validation 전용 기능
-# gold context vs retrieval context 성능 비교 (비용 클 수도 있음 필요시만 true)
-compare_retrieval: false     # validation에서만 사용, test는 이미 retrieval 필수
+# 💡 compare_retrieval: validation 전용 기능
+# gold context vs retrieval context 성능 비교 (비용 큼, 필요시만 true)
+compare_retrieval: false
+
+
+##################################
+# --- retrieval ---
+##################################
+# Retrieval 객체가 직접 참조하는 상세 설정
+# paths.py의 중앙 관리 경로를 기본값으로 사용
+
+retrieval:
+  # 기본 경로 (paths.py와 일치)
+  data_path: ./data
+  context_path: wikipedia_documents.json
+  
+  # Weighted Hybrid (BM25 + KURE) 설정
+  alpha: 0.35                               # BM25 가중치 (최적값: 0.35)
+                                            # hybrid_score = α×BM25_norm + (1-α)×Dense_norm
+  
+  # KURE Dense Retrieval
+  dense_model: nlpai-lab/KURE-v1
+  corpus_emb_path: ./data/embeddings/kure_corpus_emb.npy
+  passages_meta_path: ./data/embeddings/kure_passages_meta.jsonl
+  
+  # BM25 Sparse Retrieval
+  bm25_k1: 1.5
+  bm25_b: 0.75
+  
+  # 캐시 경로 (Dynamic Hard Negative 학습용)
+  cache_dir: ./data/cache/retrieval
+  train_cache: ./data/cache/retrieval/train_top50.jsonl
+  val_cache: ./data/cache/retrieval/val_top50.jsonl
+  test_cache: ./data/cache/retrieval/test_top50.jsonl
+
+
+##################################
+# --- dynamic_hard_negative ---
+##################################
+# 캐시 기반 Dynamic Hard Negative Training 설정
+# 캐시가 있으면 자동 활성화, 없으면 기존 학습 방식으로 fallback
+
+dynamic_hard_negative:
+  enabled: true                             # DHN 학습 사용 여부
+  k_ret: 20                                 # retrieval top-k에서 샘플링
+  k_read: 3                                 # 학습에 사용할 context 수 (1 pos + n neg)
+  alpha: 0.35                               # hybrid score 계산용 (retrieval.alpha와 동일 권장)
+  use_title: true                           # context에 title 포함 여부
+
 
 ##################################
 # --- training (TrainingArguments) ---
 ##################################
-output_dir: ./outputs/{username}/{exp_name}  # {username} 부분을 본인 이름으로 변경 권장
-num_train_epochs: 5
-per_device_train_batch_size: 16          # 3952 / 16 = 247 steps/epoch
+output_dir: ./outputs/{username}/{exp_name} # {username}, {exp_name} 부분 변경 필요
+num_train_epochs: 3
+per_device_train_batch_size: 16             # 3952 / 16 = 247 steps/epoch
 per_device_eval_batch_size: 32
-learning_rate: 3.0e-5
-warmup_ratio: 0.1                         # ~74 steps warmup
+learning_rate: 2.0e-5
+warmup_ratio: 0.1                           # ~74 steps warmup (3 epochs 기준)
 weight_decay: 0.01
 
-# logging & save 전략 (247 steps/epoch 기준)
-logging_steps: 50
+# Logging & Save 전략
+logging_steps: 100
 logging_first_step: true
-eval_strategy: epoch                      # 에포크마다 평가
-save_strategy: epoch                      # 에포크마다 저장
-save_total_limit: 1                       # 💾 best checkpoint 1개만 유지 (용량 절약)
-save_only_model: true                     # 💾 model만 저장 (optimizer.pt, scheduler.pt 저장 안함)
-load_best_model_at_end: true              # ⭐ 학습 종료 시 best checkpoint 자동 로드
-metric_for_best_model: "exact_match"      # ⭐ EM 기준으로 best model 선택
-greater_is_better: true                   # ⭐ EM이 높을수록 좋음
-save_safetensors: true                    # safetensors 형식으로 저장 (권장, 더 안전하고 빠름)
+eval_strategy: epoch                        # 에포크마다 평가
+save_strategy: epoch                        # 에포크마다 저장
+save_total_limit: 2                         # best checkpoint 2개 유지
+save_only_model: true                       # model만 저장 (optimizer 제외)
+load_best_model_at_end: true                # 학습 종료 시 best checkpoint 로드
+metric_for_best_model: exact_match          # EM 기준으로 best model 선택
+greater_is_better: true                     # EM이 높을수록 좋음
+save_safetensors: true                      # safetensors 형식 저장 (권장)
 
 # 기타 설정
-fp16: # 큰 모델 양자화
+fp16: true                                  # Mixed precision (V100 최적화)
 dataloader_num_workers: 2
 gradient_accumulation_steps: 1
-resume_from_checkpoint:
+resume_from_checkpoint:                     # 체크포인트에서 재개 시 경로 지정
 
-# wandb 관련 설정
-report_to:
-# report_to: wandb              # wandb 사용 시 주석 해제
-# run_name: mrc-bert-base       # wandb run name
+# wandb 설정 (선택)
+report_to:                                  # wandb 사용 시 아래 주석 해제
+# report_to: wandb
+# run_name: mrc-experiment
 

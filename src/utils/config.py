@@ -34,7 +34,9 @@ def get_config(parser: HfArgumentParser):
         if not os.path.exists(config_path):
             raise FileNotFoundError(f"Config file not found: {config_path}")
 
-        return parser.parse_yaml_file(config_path)
+        # allow_extra_keys=True로 설정하여 retrieval 등 추가 키 허용
+        # TODO: .yaml이 다른 옵션 넣을시 에러 발생하는지 반드시 확인
+        return parser.parse_yaml_file(config_path, allow_extra_keys=True)
 
     # 그 외에는 기존 방식 유지 (CLI 인자)
     return parser.parse_args_into_dataclasses()

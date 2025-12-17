@@ -6,11 +6,13 @@ import random
 import numpy as np
 import torch
 import evaluate
-from typing import NoReturn
+from typing import NoReturn, Optional
 
 from src.arguments import DataTrainingArguments, ModelArguments
 from datasets import DatasetDict, load_from_disk
 from src.trainer_qa import QuestionAnsweringTrainer
+from src.retrieval import get_retriever
+from src.utils.retrieval_utils import retrieve_and_build_dataset
 from transformers import (
     AutoConfig,
     AutoModelForQuestionAnswering,
@@ -38,6 +40,14 @@ from src.utils.evaluator import (
     save_detailed_results,
 )
 from src.utils.analysis import save_prediction_analysis
+
+# Dynamic Hard Negative 학습용 모듈
+from src.datasets.mrc_with_retrieval import (
+    MRCWithRetrievalDataset,
+    load_retrieval_cache,
+    load_passages_corpus,
+)
+from src.retrieval.paths import get_path, PATHS
 
 seed = 2024
 deterministic = False
@@ -94,8 +104,6 @@ def main():
     print(f"weight_decay: {training_args.weight_decay}")
     print(f"logging_steps: {training_args.logging_steps}")
     print(f"logging_first_step: {training_args.logging_first_step}")
-    # attr 환경 이슈로 아예 주석 처리함
-    # print(f"evaluation_strategy: {training_args.eval_strategy}")
     # print(f"eval_strategy: {training_args.eval_strategy}")
     print(f"save_strategy: {training_args.save_strategy}")
     print(f"save_total_limit: {training_args.save_total_limit}")
@@ -134,6 +142,105 @@ def main():
         from_tf=bool(".ckpt" in model_args.model_name_or_path),
         config=config,
     )
+
+    # === Retrieval-Augmented Training & Validation ===
+    # 1. Training Set Retrieval
+    if data_args.train_retrieval and training_args.do_train:
+        logger.info("🔄 Applying Retrieval-Augmented Training...")
+
+        config_path = (
+            sys.argv[1]
+            if len(sys.argv) == 2 and sys.argv[1].endswith(".yaml")
+            else None
+        )
+
+        # Factory 패턴 사용
+        retriever = get_retriever(
+            retrieval_type=data_args.retrieval_type,
+            tokenize_fn=tokenizer.tokenize,
+            config_path=config_path,
+        )
+        retriever.build()
+
+        new_train_dataset = retrieve_and_build_dataset(
+            retriever=retriever,
+            dataset=datasets["train"],
+            data_args=data_args,
+            split_name="train",
+            is_train=True,
+            tokenizer=tokenizer,
+        )
+        datasets["train"] = new_train_dataset
+
+    # 2. Validation Set Retrieval (캐시 우선, 없으면 실시간 fallback)
+    if data_args.eval_retrieval and training_args.do_eval:
+        logger.info("🔄 Applying Retrieval-Augmented Validation...")
+
+        # Config 경로 (YAML 설정 읽기용)
+        config_path = (
+            sys.argv[1]
+            if len(sys.argv) == 2 and sys.argv[1].endswith(".yaml")
+            else None
+        )
+
+        # 캐시 경로 확인
+        val_cache_path = get_path("val_cache")
+
+        if os.path.exists(val_cache_path):
+            # 캐시 기반 retrieval (alpha 일관성 유지)
+            logger.info(f"📦 Using cached retrieval from {val_cache_path}")
+
+            # YAML에서 alpha 가져오기
+            retrieval_alpha = 0.35  # 기본값
+            if config_path:
+                try:
+                    import yaml
+
+                    with open(config_path, "r", encoding="utf-8") as f:
+                        yaml_cfg = yaml.safe_load(f)
+                    retrieval_alpha = yaml_cfg.get("retrieval", {}).get("alpha", 0.35)
+                except Exception:
+                    pass
+
+            logger.info(
+                f"   alpha={retrieval_alpha}, top_k={data_args.top_k_retrieval}"
+            )
+
+            # 캐시에서 validation dataset 구성
+            from inference import load_retrieval_from_cache
+
+            new_val_dataset = load_retrieval_from_cache(
+                cache_path=val_cache_path,
+                dataset=datasets["validation"],
+                data_args=data_args,
+                alpha=retrieval_alpha,
+            )
+            datasets["validation"] = new_val_dataset
+        else:
+            # 캐시 없음: 실시간 retrieval fallback
+            logger.warning(
+                f"⚠️  Cache not found at {val_cache_path}, using live retrieval"
+            )
+
+            # Reuse retriever if created, else create
+            if "retriever" not in locals():
+                retriever = get_retriever(
+                    retrieval_type=data_args.retrieval_type,
+                    tokenize_fn=tokenizer.tokenize,
+                    config_path=config_path,
+                )
+                retriever.build()
+
+            new_val_dataset = retrieve_and_build_dataset(
+                retriever=retriever,
+                dataset=datasets["validation"],
+                data_args=data_args,
+                split_name="validation",
+                is_train=False,
+                tokenizer=tokenizer,
+            )
+            datasets["validation"] = new_val_dataset
+    # ====================================
 
     logger.info(
         f"training_args type: {type(training_args)}, "
@@ -270,19 +377,117 @@ def run_mrc(
 
         return tokenized_examples
 
+    # === Dynamic Hard Negative 학습용 캐시 확인 ===
+    use_dynamic_hard_negative = False
+    dhn_config = {}
+
+    # paths.py에서 기본 경로 가져오기
+    train_cache_path = get_path("train_cache")
+    val_cache_path = get_path("val_cache")
+    passages_meta_path = get_path("kure_passages_meta")
+    wiki_path = get_path("wiki_corpus")
+
+    # YAML config에서 dynamic_hard_negative 설정 확인
+    config_path = (
+        sys.argv[1] if len(sys.argv) == 2 and sys.argv[1].endswith(".yaml") else None
+    )
+
+    if config_path:
+        try:
+            import yaml
+
+            with open(config_path, "r", encoding="utf-8") as f:
+                yaml_config = yaml.safe_load(f)
+            dhn_config = yaml_config.get("dynamic_hard_negative", {})
+            use_dynamic_hard_negative = dhn_config.get("enabled", False)
+
+            # 캐시 경로 설정 (config에서 가져오거나 paths.py 기본값)
+            retrieval_config = yaml_config.get("retrieval", {})
+            if retrieval_config.get("train_cache"):
+                train_cache_path = retrieval_config["train_cache"]
+            if retrieval_config.get("val_cache"):
+                val_cache_path = retrieval_config["val_cache"]
+            if retrieval_config.get("passages_meta_path"):
+                passages_meta_path = retrieval_config["passages_meta_path"]
+        except Exception as e:
+            logger.warning(
+                f"⚠️  Failed to load YAML config for dynamic_hard_negative: {e}"
+            )
+
+    # 캐시 파일 존재 확인
+    cache_exists = os.path.exists(train_cache_path) and os.path.exists(val_cache_path)
+
+    if use_dynamic_hard_negative and not cache_exists:
+        logger.warning(
+            f"⚠️  dynamic_hard_negative.enabled=True but cache not found!\n"
+            f"   Expected: {train_cache_path}, {val_cache_path}\n"
+            f"   Run: python -m src.retrieval.build_retrieval_cache\n"
+            f"   Falling back to standard training..."
+        )
+        use_dynamic_hard_negative = False
+
+    if use_dynamic_hard_negative:
+        logger.info("🚀 Using Dynamic Hard Negative Training with cached retrieval")
+
     if training_args.do_train:
         if "train" not in datasets:
             raise ValueError("--do_train requires a train dataset")
-        train_dataset = datasets["train"]
 
-        # dataset에서 train feature를 생성합니다.
-        train_dataset = train_dataset.map(
-            prepare_train_features,
-            batched=True,
-            num_proc=data_args.preprocessing_num_workers,
-            remove_columns=column_names,
-            load_from_cache_file=not data_args.overwrite_cache,
-        )
+        if use_dynamic_hard_negative:
+            # === Dynamic Hard Negative 기반 학습 ===
+            logger.info(f"📂 Loading retrieval cache from {train_cache_path}")
+            train_cache = load_retrieval_cache(train_cache_path)
+
+            # Passages corpus 로드 (paths.py 경로 사용)
+            if os.path.exists(passages_meta_path):
+                logger.info(f"📂 Loading passages from {passages_meta_path}")
+                passages_corpus = load_passages_corpus(
+                    passages_meta_path=passages_meta_path
+                )
+            else:
+                logger.info(f"📂 Loading passages from {wiki_path}")
+                passages_corpus = load_passages_corpus(wiki_path=wiki_path)
+
+            # Dynamic Hard Negative 설정
+            dhn_k_ret = dhn_config.get("k_ret", data_args.top_k_retrieval)
+            dhn_k_read = dhn_config.get("k_read", 3)
+            dhn_alpha = dhn_config.get("alpha", 0.7)
+            dhn_use_title = dhn_config.get("use_title", True)
+
+            logger.info(
+                f"   k_ret={dhn_k_ret}, k_read={dhn_k_read}, "
+                f"alpha={dhn_alpha}, use_title={dhn_use_title}"
+            )
+
+            # MRCWithRetrievalDataset 생성
+            train_dataset = MRCWithRetrievalDataset(
+                examples=datasets["train"],
+                retrieval_cache=train_cache,
+                passages_corpus=passages_corpus,
+                tokenizer=tokenizer,
+                mode="train",
+                k_ret=dhn_k_ret,
+                k_read=dhn_k_read,
+                max_seq_length=max_seq_length,
+                doc_stride=data_args.doc_stride,
+                alpha=dhn_alpha,
+                return_token_type_ids=use_return_token_type_ids,
+                use_title=dhn_use_title,
+            )
+
+            logger.info(f"✅ Train dataset created: {len(train_dataset)} examples")
+        else:
+            # === 기존 방식 (HF Dataset.map) ===
+            train_dataset = datasets["train"]
+
+            # dataset에서 train feature를 생성합니다.
+            train_dataset = train_dataset.map(
+                prepare_train_features,
+                batched=True,
+                num_proc=data_args.preprocessing_num_workers,
+                remove_columns=column_names,
+                load_from_cache_file=not data_args.overwrite_cache,
+            )
 
     # Validation preprocessing
     def prepare_validation_features(
@@ -336,7 +541,7 @@ def run_mrc(
         prepare_validation_features,
         batched=True,
         num_proc=data_args.preprocessing_num_workers,
-        remove_columns=column_names,
+        remove_columns=eval_dataset.column_names,
         load_from_cache_file=not data_args.overwrite_cache,
     )
 

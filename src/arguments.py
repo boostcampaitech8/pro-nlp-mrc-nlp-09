@@ -91,6 +91,18 @@ class DataTrainingArguments:
         default=True,
         metadata={"help": "Whether to run passage retrieval using sparse embedding."},
     )
+    train_retrieval: bool = field(
+        default=False,
+        metadata={
+            "help": "Whether to run passage retrieval during training (Retrieval-Augmented Training)."
+        },
+    )
+    retrieval_type: str = field(
+        default="bm25",
+        metadata={
+            "help": "Retrieval type to use (sparse, dense, hybrid, bm25, koe5, kure, weighted_hybrid)."
+        },
+    )
     num_clusters: int = field(
         default=64, metadata={"help": "Define how many clusters to use for faiss."}
     )
@@ -117,3 +129,11 @@ class DataTrainingArguments:
             "Only used when inference_split='validation'. Runs inference twice (gold + retrieval)."
         },
     )
+    # Dynamic Hard Negative Training 관련 설정 (YAML에서 dynamic_hard_negative 섹션으로 관리)
+    # 아래 설정들은 DataTrainingArguments에서 직접 사용하지 않고,
+    # YAML의 dynamic_hard_negative 섹션에서 읽어 사용합니다.
+    # - enabled: bool (Dynamic Hard Negative 사용 여부)
+    # - k_ret: int (retrieval top-k)
+    # - k_read: int (train에서 사용할 context 수)
+    # - alpha: float (hybrid score 계산용 BM25 가중치)
+    # - use_title: bool (title을 context에 포함할지 여부)
