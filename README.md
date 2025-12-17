@@ -45,19 +45,18 @@ BM25(sparse) + dense의 hybrid score로 top-k 문서 선별
 - BM25알고리즘 점수와 결합
 - rerank 적용
 ### Ensemble
-모델 5개 결합
-1. 모델1
-2. 모델2
-3. 모델3
-4. 모델4
-5. 모델5
+- oceann2
+- roberta2
+- hanteck2
+- uomnf2 
 ### 상세 실험 내용
-- [랩업 리포트](http://123)   
+- [랩업 리포트](https://github.com/boostcampaitech8/pro-nlp-mrc-nlp-09/blob/main/docs/MRC_NLP-09.pdf)   
 
 
 ## 🏆 최종 성적
-- **중간 순위** : **4위** (EM : 75% / F1 : 83.62%) / 16팀
-- **최종 순위** : **7위** (EM : 68.6100% / 79.87%) / 16팀
-
+- **Public 순위** : **4위** (EM : 75% / F1 : 83.62%) / 16팀
+![public](assets/public.png)
+- **Private 순위** : **7위** (EM : 68.6100% / 79.87%) / 16팀
+![private](assets/private.png)
 ## 📁 구조 소개
 
